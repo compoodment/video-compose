@@ -1,0 +1,29 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Compile Python tools
+        run: python3 -m compileall tools
+      - name: Validate examples
+        run: |
+          python3 tools/video-compose.py --validate-only examples/video-compose.example.json
+          python3 tools/video-compose.py --validate-only examples/video-compose.motion-example.json
+          python3 tools/video-compose.py --validate-only examples/video-compose.lower-third-example.json
+          python3 tools/video-compose.py --validate-only examples/video-compose.motion-polish-example.json
+      - name: Render and probe templates
+        run: python3 tools/video-compose-verify.py
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-compose-verify
+          path: artifacts/video-compose/verify

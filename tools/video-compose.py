@@ -20,6 +20,15 @@ from pathlib import Path
 from typing import Any
 
 
+SCENE_TYPES = {"card", "bars", "particles", "wave", "grid", "orbits", "typewriter", "image", "media", "layered"}
+LAYER_TYPES = {"media", "panel", "text", "lower_third"}
+AUDIO_TYPES = {"none", "silence", "tone", "noise", "pulse"}
+FIT_TYPES = {"contain", "cover", "stretch"}
+CAMERA_TYPES = {"none", "zoom_in", "zoom_out", "pan", "shake"}
+TRANSITION_TYPES = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen", "circleclose", "none"}
+EASING_TYPES = {"linear", "none", "in_quad", "ease_in", "out_quad", "ease_out", "in_out_quad", "in_cubic", "out_cubic", "in_out_cubic"}
+
+
 def ffmpeg_bin(name: str | None = None) -> str:
     return name or shutil.which("ffmpeg") or str(Path.home() / ".local/bin/ffmpeg")
 
@@ -105,6 +114,48 @@ def ass_color(value: str) -> str:
 
 def esc_filter_path(path: Path) -> str:
     return str(path).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+
+
+def ffmpeg_color(value: str) -> str:
+    value = str(value)
+    if value.startswith("#") and len(value) == 7:
+        return "0x" + value[1:]
+    return value
+
+
+def ffexpr(value: str) -> str:
+    """Escape an ffmpeg expression for use inside a filter option."""
+    return str(value).replace("\\", r"\\").replace(",", r"\,")
+
+
+def rounded_rect_alpha_expr(width: int, height: int, radius: int) -> str:
+    """Return a geq alpha expression for a rounded rectangle mask."""
+    radius = max(0, min(int(radius), width // 2, height // 2))
+    if radius <= 0:
+        return "255"
+    # Inside the straight center bands is opaque. In corners, test distance
+    # from the corner circle centers. geq uses commas for function args, so
+    # callers must quote this expression inside the filter graph.
+    r = radius
+    right = width - radius - 1
+    bottom = height - radius - 1
+    return (
+        f"if(gte(X,{r})*lte(X,{right})+gte(Y,{r})*lte(Y,{bottom}),255,"
+        f"if(lte((X-if(lt(X,{r}),{r},{right}))*(X-if(lt(X,{r}),{r},{right}))+"
+        f"(Y-if(lt(Y,{r}),{r},{bottom}))*(Y-if(lt(Y,{r}),{r},{bottom})),{r*r}),255,0))"
+    )
+
+
+def apply_rounded_mask(filters: list[str], source_label: str, out_label: str, *, width: int, height: int, radius: int, fps: int, duration: float) -> None:
+    if radius <= 0:
+        filters.append(f"[{source_label}]format=rgba[{out_label}]")
+        return
+    mask_label = f"{out_label}mask"
+    fmt_label = f"{out_label}fmt"
+    expr = rounded_rect_alpha_expr(width, height, radius)
+    filters.append(f"color=c=white:s={width}x{height}:r={fps}:d={duration},format=gray,geq=lum='{expr}'[{mask_label}]")
+    filters.append(f"[{source_label}]format=rgba[{fmt_label}]")
+    filters.append(f"[{fmt_label}][{mask_label}]alphamerge[{out_label}]")
 
 
 def scene_duration(scene: dict[str, Any]) -> float:
@@ -486,15 +537,15 @@ def scene_events(scene: dict[str, Any], w: int, h: int, duration: float) -> list
                 )
             elif layer.get("type") == "lower_third":
                 x = int(layer.get("x", 52))
-                y = int(layer.get("y", h - 124))
+                y = int(layer.get("y", h - 132))
                 events.append(
                     {
                         "text": wrap_text(layer.get("text", ""), layer.get("wrap", 34)),
                         "start": layer.get("start", 0),
                         "end": layer.get("end", duration),
                         "x": x + int(layer.get("text_x", 22)),
-                        "y": y + int(layer.get("text_y", 22)),
-                        "size": layer.get("size", 34),
+                        "y": y + int(layer.get("text_y", 18)),
+                        "size": layer.get("size", 30),
                         "color": layer.get("text_color", "white"),
                         "align": layer.get("align", 7),
                     }
@@ -754,19 +805,34 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
 
         filters: list[str] = []
         base_label = "0:v"
+
+        def add_panel_layer(base: str, layer: dict[str, Any], out_label: str, *, idx: int, width: int, height: int, x_expr: str, y_expr: str, start: float, end: float, color_key: str = "panel_color") -> str:
+            color = ffmpeg_color(layer.get(color_key, layer.get("color", "black")))
+            radius = int(layer.get("radius", 0))
+            opacity_expr = str(float(layer.get("opacity", 1.0)))
+            raw_label = f"{out_label}raw"
+            shaped_label = f"{out_label}shape"
+            alpha_label = f"{out_label}alpha"
+            filters.append(f"color=c={color}:s={width}x{height}:r={fps}:d={duration},format=rgba[{raw_label}]")
+            apply_rounded_mask(filters, raw_label, shaped_label, width=width, height=height, radius=radius, fps=fps, duration=duration)
+            filters.append(f"[{shaped_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}'[{alpha_label}]")
+            filters.append(f"[{base}][{alpha_label}]overlay=x='{x_expr}':y='{y_expr}':enable='between(t,{start},{end})':shortest=1[{out_label}]")
+            return out_label
+
         for idx, layer in enumerate(layers, start=1):
             layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
             if layer_type == "text":
                 continue
             if layer_type == "lower_third":
                 layer.setdefault("x", 52)
-                layer.setdefault("y", h - 126)
+                layer.setdefault("y", h - 132)
                 layer.setdefault("width", w - 104)
-                layer.setdefault("height", 92)
+                layer.setdefault("height", 104)
                 layer.setdefault("panel_color", "#000000")
                 layer.setdefault("opacity", 0.94)
                 layer.setdefault("border", 2)
                 layer.setdefault("border_color", "#00d8ff")
+                layer.setdefault("radius", 14)
                 layer_type = "panel"
             box_w = int(layer.get("width", w))
             box_h = int(layer.get("height", h))
@@ -776,23 +842,22 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             y_expr = keyframed_expr(layer, "y", y_default, duration)
             start = float(layer.get("start", 0))
             end = float(layer.get("end", duration))
-            opacity_default = float(layer.get("opacity", 1.0))
+            opacity_expr = str(float(layer.get("opacity", 1.0)))
+            scale_expr = keyframed_expr(layer, "scale", float(layer.get("scale", 1.0)), duration)
 
             if layer_type == "panel":
                 border = int(layer.get("border", 0))
                 if border > 0:
                     border_label = f"pb{idx}"
-                    border_color = layer.get("border_color", "white")
-                    filters.append(
-                        f"[{base_label}]drawbox=x='{x_expr}-{border}':y='{y_expr}-{border}':w={box_w + border*2}:h={box_h + border*2}:color={border_color}:t=fill:enable='between(t,{start},{end})'[{border_label}]"
-                    )
+                    border_layer = {
+                        "color": layer.get("border_color", "white"),
+                        "opacity": layer.get("border_opacity", 1.0),
+                        "radius": int(layer.get("radius", 0)) + border,
+                    }
+                    add_panel_layer(base_label, border_layer, border_label, idx=idx, width=box_w + border * 2, height=box_h + border * 2, x_expr=f"({x_expr})-{border}", y_expr=f"({y_expr})-{border}", start=start, end=end, color_key="color")
                     base_label = border_label
                 out_label = f"v{idx}"
-                color = layer.get("panel_color", layer.get("color", "black"))
-                filters.append(
-                    f"[{base_label}]drawbox=x='{x_expr}':y='{y_expr}':w={box_w}:h={box_h}:color={color}@{opacity_default}:t=fill:enable='between(t,{start},{end})'[{out_label}]"
-                )
-                base_label = out_label
+                base_label = add_panel_layer(base_label, layer, out_label, idx=idx, width=box_w, height=box_h, x_expr=x_expr, y_expr=y_expr, start=start, end=end)
                 continue
 
             fit = layer.get("fit", "contain")
@@ -800,30 +865,35 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             layer_glitch = glitch_filter(layer.get("glitch"))
             if layer_glitch:
                 layer_filter += f",{layer_glitch}"
-            if opacity_default < 1.0:
-                layer_filter += f",format=rgba,colorchannelmixer=aa={opacity_default}"
-            layer_label = f"layer{idx}"
+            layer_filter += ",format=rgba"
+            pre_layer_label = f"layer{idx}pre"
             input_index = media_inputs[idx - 1]
-            filters.append(f"[{input_index}:v]{layer_filter}[{layer_label}]")
+            filters.append(f"[{input_index}:v]{layer_filter}[{pre_layer_label}]")
+            rounded_label = f"layer{idx}round"
+            apply_rounded_mask(filters, pre_layer_label, rounded_label, width=box_w, height=box_h, radius=int(layer.get("radius", 0)), fps=fps, duration=duration)
+            layer_label = f"layer{idx}"
+            filters.append(f"[{rounded_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}',scale=w='{ffexpr(f'max(2,trunc(iw*({scale_expr})/2)*2)')}':h='{ffexpr(f'max(2,trunc(ih*({scale_expr})/2)*2)')}':eval=frame[{layer_label}]")
 
             border = int(layer.get("border", 0))
             if border > 0:
                 border_label = f"b{idx}"
-                border_color = layer.get("border_color", "white")
-                filters.append(
-                    f"[{base_label}]drawbox=x='{x_expr}-{border}':y='{y_expr}-{border}':w={box_w + border*2}:h={box_h + border*2}:color={border_color}:t=fill:enable='between(t,{start},{end})'[{border_label}]"
-                )
+                border_layer = {
+                    "color": layer.get("border_color", "white"),
+                    "opacity": layer.get("border_opacity", 1.0),
+                    "radius": int(layer.get("radius", 0)) + border,
+                }
+                add_panel_layer(base_label, border_layer, border_label, idx=idx, width=box_w + border * 2, height=box_h + border * 2, x_expr=f"({x_expr})-{border}", y_expr=f"({y_expr})-{border}", start=start, end=end, color_key="color")
                 base_label = border_label
 
             out_label = f"v{idx}"
             filters.append(f"[{base_label}][{layer_label}]overlay=x='{x_expr}':y='{y_expr}':enable='between(t,{start},{end})':shortest=1[{out_label}]")
             base_label = out_label
 
+        if filters:
+            cmd += ["-filter_complex", ";".join(filters), "-map", f"[{base_label}]"]
+        else:
+            cmd += ["-map", "0:v"]
         cmd += [
-            "-filter_complex",
-            ";".join(filters),
-            "-map",
-            f"[{base_label}]",
             "-map",
             f"{audio_index}:a",
             "-shortest",
@@ -1278,7 +1348,248 @@ def load_spec(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def validate_positive_number(errors: list[str], path: str, value: Any, *, allow_zero: bool = False) -> None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        errors.append(f"{path} must be a number")
+        return
+    if allow_zero:
+        if number < 0:
+            errors.append(f"{path} must be >= 0")
+    elif number <= 0:
+        errors.append(f"{path} must be > 0")
+
+
+def validate_size(errors: list[str], path: str, value: Any) -> None:
+    text = str(value)
+    if "x" not in text.lower():
+        errors.append(f"{path} must look like 1280x720")
+        return
+    a, b = text.lower().split("x", 1)
+    try:
+        width, height = int(a), int(b)
+    except ValueError:
+        errors.append(f"{path} dimensions must be integers")
+        return
+    if width <= 0 or height <= 0:
+        errors.append(f"{path} dimensions must be > 0")
+
+
+def validate_color(errors: list[str], path: str, value: Any) -> None:
+    if value is None:
+        return
+    text = str(value)
+    if text.startswith("&H") or text.startswith("0x"):
+        return
+    try:
+        parse_hex(text)
+    except ValueError:
+        # ffmpeg has many named colors; allow plain names rather than rejecting
+        # valid ffmpeg input. Reject obviously malformed hex strings.
+        if text.startswith("#"):
+            errors.append(f"{path} invalid color: {text}")
+
+
+def validate_audio(errors: list[str], path: str, audio: Any) -> None:
+    if audio is None:
+        return
+    if not isinstance(audio, dict):
+        errors.append(f"{path} must be an object")
+        return
+    kind = audio.get("type", "silence")
+    if kind not in AUDIO_TYPES:
+        errors.append(f"{path}.type unsupported audio type: {kind}")
+    if audio.get("source"):
+        source = Path(audio["source"]).expanduser()
+        if not source.exists():
+            errors.append(f"{path}.source not found: {source}")
+
+
+def validate_transition(errors: list[str], path: str, transition: Any) -> None:
+    if not transition:
+        return
+    if isinstance(transition, str):
+        kind = transition
+        duration = 0.35
+    elif isinstance(transition, dict):
+        kind = transition.get("type", "fade")
+        duration = transition.get("duration", 0.35)
+    else:
+        errors.append(f"{path} must be a string or object")
+        return
+    if kind not in TRANSITION_TYPES:
+        errors.append(f"{path}.type unsupported transition: {kind}")
+    validate_positive_number(errors, f"{path}.duration", duration, allow_zero=True)
+
+
+def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], duration: float) -> None:
+    keyframes = owner.get("keyframes") or []
+    if not isinstance(keyframes, list):
+        errors.append(f"{path}.keyframes must be a list")
+        return
+    seen_times: list[float] = []
+    for idx, keyframe in enumerate(keyframes):
+        kpath = f"{path}.keyframes[{idx}]"
+        if not isinstance(keyframe, dict):
+            errors.append(f"{kpath} must be an object")
+            continue
+        if "time" not in keyframe:
+            errors.append(f"{kpath}.time is required")
+            continue
+        try:
+            time_value = float(keyframe["time"])
+        except (TypeError, ValueError):
+            errors.append(f"{kpath}.time must be a number")
+            continue
+        if time_value < 0 or time_value > duration:
+            errors.append(f"{kpath}.time outside scene duration 0..{duration}")
+        seen_times.append(time_value)
+        ease = keyframe.get("ease", "linear")
+        if ease not in EASING_TYPES:
+            errors.append(f"{kpath}.ease unsupported easing: {ease}")
+        if "opacity" in keyframe:
+            errors.append(f"{kpath}.opacity keyframes are not supported yet; use layer.opacity for now")
+        for prop in ("x", "y", "scale"):
+            if prop in keyframe:
+                try:
+                    value = float(keyframe[prop])
+                except (TypeError, ValueError):
+                    errors.append(f"{kpath}.{prop} must be a number")
+                    continue
+                if prop == "scale" and value <= 0:
+                    errors.append(f"{kpath}.scale must be > 0")
+                if prop == "opacity" and not 0 <= value <= 1:
+                    errors.append(f"{kpath}.opacity should be between 0 and 1")
+    if seen_times != sorted(seen_times):
+        errors.append(f"{path}.keyframes must be in increasing time order")
+
+
+def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_value: float) -> None:
+    if not isinstance(layer, dict):
+        errors.append(f"{path} must be an object")
+        return
+    layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+    if layer_type not in LAYER_TYPES:
+        errors.append(f"{path}.type unsupported layer type: {layer_type}")
+        return
+    start = layer.get("start", 0)
+    end = layer.get("end", scene_duration_value)
+    validate_positive_number(errors, f"{path}.start", start, allow_zero=True)
+    validate_positive_number(errors, f"{path}.end", end, allow_zero=False)
+    try:
+        if float(start) >= float(end):
+            errors.append(f"{path}.start must be before end")
+        if float(end) > scene_duration_value:
+            errors.append(f"{path}.end exceeds scene duration {scene_duration_value}")
+    except (TypeError, ValueError):
+        pass
+    if layer_type == "media":
+        source = layer.get("source")
+        if not source:
+            errors.append(f"{path}.source is required for media layers")
+        else:
+            source_path = Path(source).expanduser()
+            if not source_path.exists():
+                errors.append(f"{path}.source not found: {source_path}")
+        fit = layer.get("fit", "contain")
+        if fit not in FIT_TYPES:
+            errors.append(f"{path}.fit unsupported fit: {fit}")
+    for field in ("width", "height"):
+        if field in layer:
+            validate_positive_number(errors, f"{path}.{field}", layer[field])
+    for field in ("border", "radius"):
+        if field in layer:
+            validate_positive_number(errors, f"{path}.{field}", layer[field], allow_zero=True)
+    if "opacity" in layer:
+        validate_positive_number(errors, f"{path}.opacity", layer["opacity"], allow_zero=True)
+        try:
+            if float(layer["opacity"]) > 1:
+                errors.append(f"{path}.opacity should be between 0 and 1")
+        except (TypeError, ValueError):
+            pass
+    if "scale" in layer:
+        validate_positive_number(errors, f"{path}.scale", layer["scale"])
+    validate_color(errors, f"{path}.color", layer.get("color"))
+    validate_color(errors, f"{path}.panel_color", layer.get("panel_color"))
+    validate_color(errors, f"{path}.border_color", layer.get("border_color"))
+    validate_keyframes(errors, path, layer, scene_duration_value)
+
+
+def validate_scene(errors: list[str], path: str, scene: Any) -> None:
+    if not isinstance(scene, dict):
+        errors.append(f"{path} must be an object")
+        return
+    kind = scene.get("type", "card")
+    if kind not in SCENE_TYPES:
+        errors.append(f"{path}.type unsupported scene type: {kind}")
+    duration = scene.get("duration", 2.0)
+    validate_positive_number(errors, f"{path}.duration", duration)
+    try:
+        duration_value = float(duration)
+    except (TypeError, ValueError):
+        duration_value = 0.0
+    validate_audio(errors, f"{path}.audio", scene.get("audio"))
+    validate_transition(errors, f"{path}.transition", scene.get("transition"))
+    validate_color(errors, f"{path}.background", scene.get("background"))
+    validate_color(errors, f"{path}.background2", scene.get("background2"))
+    validate_color(errors, f"{path}.accent", scene.get("accent"))
+    if kind in {"image", "media"}:
+        source = scene.get("source")
+        if not source:
+            errors.append(f"{path}.source is required for media scenes")
+        else:
+            source_path = Path(source).expanduser()
+            if not source_path.exists():
+                errors.append(f"{path}.source not found: {source_path}")
+        fit = scene.get("fit", "contain")
+        if fit not in FIT_TYPES:
+            errors.append(f"{path}.fit unsupported fit: {fit}")
+        camera = scene.get("camera") or {}
+        if isinstance(camera, dict):
+            camera_kind = camera.get("type", "none")
+            if camera_kind not in CAMERA_TYPES:
+                errors.append(f"{path}.camera.type unsupported camera: {camera_kind}")
+        else:
+            errors.append(f"{path}.camera must be an object")
+    layers = scene.get("layers") or []
+    if kind == "layered" and not layers:
+        errors.append(f"{path}.layers needs at least one layer")
+    if layers and not isinstance(layers, list):
+        errors.append(f"{path}.layers must be a list")
+    elif isinstance(layers, list):
+        for idx, layer in enumerate(layers):
+            validate_layer(errors, f"{path}.layers[{idx}]", layer, scene_duration_value=duration_value)
+
+
+def validate_spec(spec: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    validate_size(errors, "size", spec.get("size", "1280x720"))
+    validate_positive_number(errors, "fps", spec.get("fps", 24))
+    validate_transition(errors, "transition", spec.get("transition"))
+    scenes = spec.get("scenes") or []
+    if not isinstance(scenes, list) or not scenes:
+        errors.append("scenes must be a non-empty list")
+    elif isinstance(scenes, list):
+        for idx, scene in enumerate(scenes):
+            validate_scene(errors, f"scenes[{idx}]", scene)
+    audio = spec.get("audio") or {}
+    if audio:
+        if not isinstance(audio, dict):
+            errors.append("audio must be an object")
+        else:
+            validate_audio(errors, "audio.bed", audio.get("bed"))
+    return errors
+
+
+def assert_valid_spec(spec: dict[str, Any]) -> None:
+    errors = validate_spec(spec)
+    if errors:
+        raise SystemExit("validation failed:\n" + "\n".join(f"- {error}" for error in errors))
+
+
 def render_spec(spec: dict[str, Any], out: Path, ffmpeg: str) -> None:
+    assert_valid_spec(spec)
     w, h = parse_size(spec.get("size", "1280x720"))
     fps = int(spec.get("fps", 24))
     scenes = spec.get("scenes") or []
@@ -1308,16 +1619,30 @@ def render_spec(spec: dict[str, Any], out: Path, ffmpeg: str) -> None:
 def main() -> int:
     p = argparse.ArgumentParser(description="Render small original videos from scene specs.")
     p.add_argument("source", help="JSON scene spec, 'demo', or 'template:<name>'")
-    p.add_argument("out", type=Path)
+    p.add_argument("out", type=Path, nargs="?")
+    p.add_argument("--validate-only", action="store_true", help="validate the spec and exit without rendering")
     p.add_argument("--ffmpeg", default=ffmpeg_bin())
     args = p.parse_args()
-    ffmpeg = ensure_tool(args.ffmpeg)
-    if args.source == "demo":
+    source = args.source
+    if source == "validate":
+        if args.out is None:
+            raise SystemExit("usage: video-compose validate <spec|demo|template:name>")
+        source = str(args.out)
+        args.validate_only = True
+        args.out = None
+    if source == "demo":
         spec = demo_spec()
-    elif args.source.startswith("template:"):
-        spec = template_spec(args.source.split(":", 1)[1])
+    elif source.startswith("template:"):
+        spec = template_spec(source.split(":", 1)[1])
     else:
-        spec = load_spec(Path(args.source))
+        spec = load_spec(Path(source))
+    assert_valid_spec(spec)
+    if args.validate_only:
+        print("valid")
+        return 0
+    if args.out is None:
+        raise SystemExit("output path required unless --validate-only is set")
+    ffmpeg = ensure_tool(args.ffmpeg)
     render_spec(spec, args.out, ffmpeg)
     return 0
 

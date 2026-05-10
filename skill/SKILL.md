@@ -20,13 +20,17 @@ Use this when computment asks to make or edit videos programmatically.
    - a template render (`video-compose template:<name> out.mp4`)
    - a custom JSON scene spec
    - an edit of existing media with `video-kit`
-2. Prefer protected text/layout defaults:
+2. Validate specs before rendering when editing JSON:
+   - `video-compose --validate-only spec.json`
+   - fix schema/source/timing errors before chasing ffmpeg output
+3. Prefer protected text/layout defaults:
    - use `lower_third` for readable captions
    - use panels behind small text
+   - use `radius` for rounded panels/media masks
    - keep glitch/effects off foreground text unless explicitly requested
-3. Render with `video-compose`.
-4. Verify with `ffprobe`, a contact sheet, and one representative frame when visual quality matters.
-5. Send the output video with the message tool.
+4. Render with `video-compose`.
+5. Verify with `ffprobe`, a contact sheet, and one representative frame when visual quality matters.
+6. Send the output video with the message tool.
 
 ## Built-in templates
 
@@ -57,4 +61,5 @@ It renders known templates to `artifacts/video-compose/verify/`, probes streams,
 
 - This is a scripted motion-graphics/video assembly engine, not an interactive editor.
 - Keep the composer dependency-light: prefer Python stdlib + ffmpeg.
+- `x`, `y`, and media `scale` keyframes are supported; opacity is currently static.
 - Do not publish/upload to GitHub without explicit confirmation.

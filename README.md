@@ -2,7 +2,7 @@
 
 A tiny scripted motion-graphics/video assembly toolkit for AI assistants and command-line workflows.
 
-It is not an interactive editor. It renders videos from JSON scene specs using Python + ffmpeg: generated visuals, media layers, text/lower-thirds, transitions, audio, keyframes, and glitch effects.
+It is not an interactive editor. It renders videos from JSON scene specs using Python + ffmpeg: generated visuals, media layers, text/lower-thirds, transitions, audio, keyframes, rounded masks, and glitch effects.
 
 ## Requirements
 
@@ -36,11 +36,78 @@ Render a JSON spec:
 python3 tools/video-compose.py examples/video-compose.lower-third-example.json out.mp4
 ```
 
+Validate without rendering:
+
+```bash
+python3 tools/video-compose.py --validate-only examples/video-compose.motion-polish-example.json
+# or
+python3 tools/video-compose.py validate template:split-screen
+```
+
 Specs can define generated scenes, layered media, text/panels, keyframes, transitions, generated audio, and audio-bed mixing.
+
+## Spec sketch
+
+Top-level fields:
+
+```json
+{
+  "size": "640x360",
+  "fps": 24,
+  "transition": {"type": "fade", "duration": 0.25},
+  "scenes": []
+}
+```
+
+Scene types:
+
+- generated: `card`, `bars`, `particles`, `wave`, `grid`, `orbits`, `typewriter`
+- media: `image` / `media`
+- compositing: `layered`
+
+Layer types in a `layered` scene:
+
+- `media`: image/video layer with `source`, `fit`, `width`, `height`, `x`, `y`
+- `panel`: colored rectangle layer, useful for title cards and UI shapes
+- `lower_third`: panel preset plus text event defaults
+- `text`: subtitle/label event rendered through ASS subtitles
+
+Media and panel layers support:
+
+- `opacity`: static, `0..1`
+- `scale`: static or keyframed, media layers only for now
+- `radius`: rounded mask radius in pixels
+- `border`, `border_color`, `border_opacity`
+- `start` / `end` timing
+- `keyframes`: `time`, `x`, `y`, `scale`, `ease`
+
+Supported easing values: `linear`, `in_quad`, `out_quad`, `in_out_quad`, `in_cubic`, `out_cubic`, `in_out_cubic` plus `ease_in`/`ease_out` aliases.
+
+Transitions: `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `circleopen`, `circleclose`.
+
+Generated audio: `silence`, `tone`, `noise`, `pulse`. A top-level audio bed can mix generated or source audio under the rendered scenes.
+
+## Examples
+
+```bash
+python3 tools/video-compose.py examples/video-compose.example.json example.mp4
+python3 tools/video-compose.py examples/video-compose.motion-example.json motion.mp4
+python3 tools/video-compose.py examples/video-compose.motion-polish-example.json polish.mp4
+```
+
+`examples/assets/sample.ppm` is bundled so the examples and templates work without private local media.
 
 ## Helper tool
 
 `tools/video-kit.py` provides practical ffmpeg helpers: trim, contact sheets, frame extraction, GIF export, mux audio, burn subtitles, crop/scale/rotate/speed/concat, title cards, captions, fades, slideshow, and remix.
+
+## Verification
+
+```bash
+python3 tools/video-compose-verify.py
+```
+
+The verifier validates and renders the six built-in templates, probes H.264/AAC streams with `ffprobe`, and creates contact sheets for selected templates.
 
 ## OpenClaw skill
 

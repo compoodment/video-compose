@@ -1,0 +1,60 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "scenes": [
+    {
+      "type": "layered",
+      "duration": 4.0,
+      "background": "#050510",
+      "audio": {"type": "pulse", "frequency": 330, "volume": 0.035, "period": 0.35, "duty": 0.05},
+      "layers": [
+        {
+          "type": "media",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 420,
+          "height": 236,
+          "x": 110,
+          "y": 48,
+          "radius": 24,
+          "border": 3,
+          "border_color": "#00d8ff",
+          "opacity": 0.92,
+          "keyframes": [
+            {"time": 0.0, "x": 140, "scale": 0.86, "ease": "out_cubic"},
+            {"time": 0.7, "x": 110, "scale": 1.0, "ease": "out_cubic"},
+            {"time": 3.3, "x": 110, "scale": 1.0},
+            {"time": 4.0, "x": 92, "scale": 1.06, "ease": "in_cubic"}
+          ]
+        },
+        {
+          "type": "panel",
+          "x": 52,
+          "y": 268,
+          "width": 536,
+          "height": 56,
+          "radius": 18,
+          "panel_color": "#000000",
+          "opacity": 0.82,
+          "border": 2,
+          "border_color": "#ff4fd8",
+          "keyframes": [
+            {"time": 0.0, "y": 288},
+            {"time": 0.55, "y": 268, "ease": "out_cubic"},
+            {"time": 4.0, "y": 268}
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Rounded masks + scale/position keyframes",
+          "x": 76,
+          "y": 282,
+          "align": 7,
+          "size": 28,
+          "color": "white"
+        }
+      ]
+    }
+  ]
+}

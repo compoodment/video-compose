@@ -48,6 +48,7 @@ def main() -> int:
     summary: dict[str, dict] = {}
     for template in TEMPLATES:
         mp4 = OUT / f"{template}.mp4"
+        run([bin_path("video-compose"), "--validate-only", f"template:{template}"])
         run([bin_path("video-compose"), f"template:{template}", str(mp4)])
         info = ffprobe(mp4)
         summary[template] = info
