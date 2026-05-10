@@ -22,10 +22,10 @@
           "border_color": "#00d8ff",
           "opacity": 0.92,
           "keyframes": [
-            {"time": 0.0, "x": 140, "scale": 0.86, "ease": "out_cubic"},
-            {"time": 0.7, "x": 110, "scale": 1.0, "ease": "out_cubic"},
-            {"time": 3.3, "x": 110, "scale": 1.0},
-            {"time": 4.0, "x": 92, "scale": 1.06, "ease": "in_cubic"}
+            {"time": 0.0, "x": 140, "opacity": 0.0, "scale": 0.86, "ease": "out_cubic"},
+            {"time": 0.7, "x": 110, "opacity": 0.92, "scale": 1.0, "ease": "out_cubic"},
+            {"time": 3.3, "x": 110, "opacity": 0.92, "scale": 1.0},
+            {"time": 4.0, "x": 92, "opacity": 0.0, "scale": 1.06, "ease": "in_cubic"}
           ]
         },
         {
@@ -40,14 +40,14 @@
           "border": 2,
           "border_color": "#ff4fd8",
           "keyframes": [
-            {"time": 0.0, "y": 288},
-            {"time": 0.55, "y": 268, "ease": "out_cubic"},
-            {"time": 4.0, "y": 268}
+            {"time": 0.0, "opacity": 0.0, "y": 288},
+            {"time": 0.55, "opacity": 0.82, "y": 268, "ease": "out_cubic"},
+            {"time": 4.0, "opacity": 0.82, "y": 268}
           ]
         },
         {
           "type": "text",
-          "text": "Rounded masks + scale/position keyframes",
+          "text": "Rounded masks + opacity/scale keyframes",
           "x": 76,
           "y": 282,
           "align": 7,

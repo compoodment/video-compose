@@ -61,5 +61,5 @@ It renders known templates to `artifacts/video-compose/verify/`, probes streams,
 
 - This is a scripted motion-graphics/video assembly engine, not an interactive editor.
 - Keep the composer dependency-light: prefer Python stdlib + ffmpeg.
-- `x`, `y`, and media `scale` keyframes are supported; opacity is currently static.
+- `x`, `y`, `opacity`, and media `scale` keyframes are supported.
 - Do not publish/upload to GitHub without explicit confirmation.

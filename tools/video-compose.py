@@ -234,6 +234,25 @@ def ease_expr(name: str, p: str) -> str:
     raise SystemExit(f"unsupported easing: {name}")
 
 
+def ease_value(name: str, p: float) -> float:
+    p = max(0.0, min(1.0, p))
+    if name in ("linear", "none"):
+        return p
+    if name in ("in_quad", "ease_in"):
+        return p * p
+    if name in ("out_quad", "ease_out"):
+        return 1 - (1 - p) * (1 - p)
+    if name == "in_out_quad":
+        return 2 * p * p if p < 0.5 else 1 - ((-2 * p + 2) ** 2) / 2
+    if name == "in_cubic":
+        return p * p * p
+    if name == "out_cubic":
+        return 1 - ((1 - p) ** 3)
+    if name == "in_out_cubic":
+        return 4 * p * p * p if p < 0.5 else 1 - ((-2 * p + 2) ** 3) / 2
+    raise SystemExit(f"unsupported easing: {name}")
+
+
 def keyframed_expr(layer: dict[str, Any], prop: str, default: float | int, duration: float) -> str:
     keyframes = sorted(layer.get("keyframes") or [], key=lambda item: float(item.get("time", 0)))
     points = [(float(kf["time"]), float(kf[prop]), kf.get("ease", "linear")) for kf in keyframes if prop in kf]
@@ -255,6 +274,62 @@ def keyframed_expr(layer: dict[str, Any], prop: str, default: float | int, durat
         value = f"{v0}+({v1}-{v0})*({eased})"
         expr = f"if(lt(t,{t0}),{v0},if(lte(t,{t1}),{value},{expr}))"
     return expr
+
+
+def has_keyframed_prop(layer: dict[str, Any], prop: str) -> bool:
+    return any(prop in keyframe for keyframe in (layer.get("keyframes") or []))
+
+
+def keyframed_value(layer: dict[str, Any], prop: str, default: float | int, t: float, duration: float) -> float:
+    keyframes = sorted(layer.get("keyframes") or [], key=lambda item: float(item.get("time", 0)))
+    points = [(float(kf["time"]), float(kf[prop]), kf.get("ease", "linear")) for kf in keyframes if prop in kf]
+    if not points:
+        return float(default)
+    if len(points) == 1 or t <= points[0][0]:
+        return float(points[0][1])
+    if t >= points[-1][0]:
+        return float(points[-1][1])
+    for idx in range(len(points) - 1):
+        t0, v0, _ = points[idx]
+        t1, v1, ease = points[idx + 1]
+        if t0 <= t <= t1:
+            progress = (t - t0) / max(0.000001, t1 - t0)
+            eased = ease_value(ease, progress)
+            return v0 + (v1 - v0) * eased
+    return float(points[-1][1])
+
+
+def rounded_rect_mask(width: int, height: int, radius: int) -> bytes:
+    radius = max(0, min(int(radius), width // 2, height // 2))
+    if radius <= 0:
+        return bytes([255]) * (width * height)
+    right = width - radius - 1
+    bottom = height - radius - 1
+    rr = radius * radius
+    mask = bytearray(width * height)
+    for y in range(height):
+        cy = radius if y < radius else bottom if y > bottom else y
+        for x in range(width):
+            cx = radius if x < radius else right if x > right else x
+            if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr:
+                mask[y * width + x] = 255
+    return bytes(mask)
+
+
+def write_opacity_mask(path: Path, layer: dict[str, Any], *, width: int, height: int, radius: int, duration: float, fps: int) -> None:
+    base = rounded_rect_mask(width, height, radius)
+    frames = max(1, int(math.ceil(duration * fps)))
+    default = float(layer.get("opacity", 1.0))
+    with path.open("wb") as fh:
+        for frame in range(frames):
+            t = min(duration, frame / fps)
+            opacity = max(0.0, min(1.0, keyframed_value(layer, "opacity", default, t, duration)))
+            if opacity >= 0.999:
+                fh.write(base)
+            elif opacity <= 0.001:
+                fh.write(bytes(len(base)))
+            else:
+                fh.write(bytes(int(pixel * opacity) for pixel in base))
 
 
 def scene_transition(scene: dict[str, Any], default: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -775,6 +850,18 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
         raise SystemExit("layered scene needs at least one layer")
     background = scene.get("background", "black")
 
+    for layer in layers:
+        if layer.get("type") == "lower_third":
+            layer.setdefault("x", 52)
+            layer.setdefault("y", h - 132)
+            layer.setdefault("width", w - 104)
+            layer.setdefault("height", 104)
+            layer.setdefault("panel_color", "#000000")
+            layer.setdefault("opacity", 0.94)
+            layer.setdefault("border", 2)
+            layer.setdefault("border_color", "#00d8ff")
+            layer.setdefault("radius", 14)
+
     with tempfile.TemporaryDirectory(prefix="video-compose-layered-") as tmp:
         tmpdir = Path(tmp)
         base = tmpdir / "base.mp4"
@@ -787,26 +874,36 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             f"color=c={background}:s={w}x{h}:r={fps}:d={duration}",
         ]
         media_inputs: dict[int, int] = {}
+        alpha_inputs: dict[int, int] = {}
         next_input = 1
         for layer_index, layer in enumerate(layers):
             layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
             if layer_type in {"text", "panel", "lower_third"}:
-                continue
-            if layer_type != "media":
+                pass
+            elif layer_type != "media":
                 raise SystemExit(f"unsupported layer type: {layer_type}")
-            source = Path(layer["source"]).expanduser()
-            if not source.exists():
-                raise SystemExit(f"layer source not found: {source}")
-            media_inputs[layer_index] = next_input
-            next_input += 1
-            cmd += media_source_args(source, duration, fps, layer.get("source_type", "auto"))
+            else:
+                source = Path(layer["source"]).expanduser()
+                if not source.exists():
+                    raise SystemExit(f"layer source not found: {source}")
+                media_inputs[layer_index] = next_input
+                next_input += 1
+                cmd += media_source_args(source, duration, fps, layer.get("source_type", "auto"))
+            if layer_type != "text" and has_keyframed_prop(layer, "opacity"):
+                box_w = int(layer.get("width", w))
+                box_h = int(layer.get("height", h))
+                mask = tmpdir / f"alpha-{layer_index:03d}.gray"
+                write_opacity_mask(mask, layer, width=box_w, height=box_h, radius=int(layer.get("radius", 0)), duration=duration, fps=fps)
+                alpha_inputs[layer_index] = next_input
+                next_input += 1
+                cmd += ["-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{box_w}x{box_h}", "-r", str(fps), "-i", str(mask)]
         audio_index = next_input
         cmd += ["-f", "lavfi", "-t", str(duration), "-i", audio_source(scene, duration)]
 
         filters: list[str] = []
         base_label = "0:v"
 
-        def add_panel_layer(base: str, layer: dict[str, Any], out_label: str, *, idx: int, width: int, height: int, x_expr: str, y_expr: str, start: float, end: float, color_key: str = "panel_color") -> str:
+        def add_panel_layer(base: str, layer: dict[str, Any], out_label: str, *, idx: int, width: int, height: int, x_expr: str, y_expr: str, start: float, end: float, color_key: str = "panel_color", alpha_input: int | None = None) -> str:
             color = ffmpeg_color(layer.get(color_key, layer.get("color", "black")))
             radius = int(layer.get("radius", 0))
             opacity_expr = str(float(layer.get("opacity", 1.0)))
@@ -814,8 +911,11 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             shaped_label = f"{out_label}shape"
             alpha_label = f"{out_label}alpha"
             filters.append(f"color=c={color}:s={width}x{height}:r={fps}:d={duration},format=rgba[{raw_label}]")
-            apply_rounded_mask(filters, raw_label, shaped_label, width=width, height=height, radius=radius, fps=fps, duration=duration)
-            filters.append(f"[{shaped_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}'[{alpha_label}]")
+            if alpha_input is not None:
+                filters.append(f"[{raw_label}][{alpha_input}:v]alphamerge[{alpha_label}]")
+            else:
+                apply_rounded_mask(filters, raw_label, shaped_label, width=width, height=height, radius=radius, fps=fps, duration=duration)
+                filters.append(f"[{shaped_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}'[{alpha_label}]")
             filters.append(f"[{base}][{alpha_label}]overlay=x='{x_expr}':y='{y_expr}':enable='between(t,{start},{end})':shortest=1[{out_label}]")
             return out_label
 
@@ -824,15 +924,6 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             if layer_type == "text":
                 continue
             if layer_type == "lower_third":
-                layer.setdefault("x", 52)
-                layer.setdefault("y", h - 132)
-                layer.setdefault("width", w - 104)
-                layer.setdefault("height", 104)
-                layer.setdefault("panel_color", "#000000")
-                layer.setdefault("opacity", 0.94)
-                layer.setdefault("border", 2)
-                layer.setdefault("border_color", "#00d8ff")
-                layer.setdefault("radius", 14)
                 layer_type = "panel"
             box_w = int(layer.get("width", w))
             box_h = int(layer.get("height", h))
@@ -857,7 +948,7 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
                     add_panel_layer(base_label, border_layer, border_label, idx=idx, width=box_w + border * 2, height=box_h + border * 2, x_expr=f"({x_expr})-{border}", y_expr=f"({y_expr})-{border}", start=start, end=end, color_key="color")
                     base_label = border_label
                 out_label = f"v{idx}"
-                base_label = add_panel_layer(base_label, layer, out_label, idx=idx, width=box_w, height=box_h, x_expr=x_expr, y_expr=y_expr, start=start, end=end)
+                base_label = add_panel_layer(base_label, layer, out_label, idx=idx, width=box_w, height=box_h, x_expr=x_expr, y_expr=y_expr, start=start, end=end, alpha_input=alpha_inputs.get(idx - 1))
                 continue
 
             fit = layer.get("fit", "contain")
@@ -870,9 +961,18 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             input_index = media_inputs[idx - 1]
             filters.append(f"[{input_index}:v]{layer_filter}[{pre_layer_label}]")
             rounded_label = f"layer{idx}round"
-            apply_rounded_mask(filters, pre_layer_label, rounded_label, width=box_w, height=box_h, radius=int(layer.get("radius", 0)), fps=fps, duration=duration)
+            alpha_input = alpha_inputs.get(idx - 1)
+            if alpha_input is not None:
+                fmt_label = f"layer{idx}fmt"
+                filters.append(f"[{pre_layer_label}]format=rgba[{fmt_label}]")
+                filters.append(f"[{fmt_label}][{alpha_input}:v]alphamerge[{rounded_label}]")
+            else:
+                apply_rounded_mask(filters, pre_layer_label, rounded_label, width=box_w, height=box_h, radius=int(layer.get("radius", 0)), fps=fps, duration=duration)
             layer_label = f"layer{idx}"
-            filters.append(f"[{rounded_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}',scale=w='{ffexpr(f'max(2,trunc(iw*({scale_expr})/2)*2)')}':h='{ffexpr(f'max(2,trunc(ih*({scale_expr})/2)*2)')}':eval=frame[{layer_label}]")
+            if alpha_input is not None:
+                filters.append(f"[{rounded_label}]scale=w='{ffexpr(f'max(2,trunc(iw*({scale_expr})/2)*2)')}':h='{ffexpr(f'max(2,trunc(ih*({scale_expr})/2)*2)')}':eval=frame[{layer_label}]")
+            else:
+                filters.append(f"[{rounded_label}]colorchannelmixer=aa='{ffexpr(opacity_expr)}',scale=w='{ffexpr(f'max(2,trunc(iw*({scale_expr})/2)*2)')}':h='{ffexpr(f'max(2,trunc(ih*({scale_expr})/2)*2)')}':eval=frame[{layer_label}]")
 
             border = int(layer.get("border", 0))
             if border > 0:
@@ -1423,7 +1523,7 @@ def validate_transition(errors: list[str], path: str, transition: Any) -> None:
     validate_positive_number(errors, f"{path}.duration", duration, allow_zero=True)
 
 
-def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], duration: float) -> None:
+def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], duration: float, *, allowed_props: set[str]) -> None:
     keyframes = owner.get("keyframes") or []
     if not isinstance(keyframes, list):
         errors.append(f"{path}.keyframes must be a list")
@@ -1448,10 +1548,14 @@ def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], dura
         ease = keyframe.get("ease", "linear")
         if ease not in EASING_TYPES:
             errors.append(f"{kpath}.ease unsupported easing: {ease}")
-        if "opacity" in keyframe:
-            errors.append(f"{kpath}.opacity keyframes are not supported yet; use layer.opacity for now")
-        for prop in ("x", "y", "scale"):
+        for key in keyframe:
+            if key not in {"time", "ease", "x", "y", "opacity", "scale"}:
+                errors.append(f"{kpath}.{key} unsupported keyframe property")
+        for prop in ("x", "y", "opacity", "scale"):
             if prop in keyframe:
+                if prop not in allowed_props:
+                    errors.append(f"{kpath}.{prop} is not supported on this layer type")
+                    continue
                 try:
                     value = float(keyframe[prop])
                 except (TypeError, ValueError):
@@ -1513,7 +1617,16 @@ def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_v
     validate_color(errors, f"{path}.color", layer.get("color"))
     validate_color(errors, f"{path}.panel_color", layer.get("panel_color"))
     validate_color(errors, f"{path}.border_color", layer.get("border_color"))
-    validate_keyframes(errors, path, layer, scene_duration_value)
+    if layer_type == "media":
+        allowed_keyframe_props = {"x", "y", "opacity", "scale"}
+    elif layer_type == "panel":
+        allowed_keyframe_props = {"x", "y", "opacity"}
+    else:
+        allowed_keyframe_props = set()
+    if layer.get("keyframes") and not allowed_keyframe_props:
+        errors.append(f"{path}.keyframes are not supported for {layer_type} layers; use media/panel layers for animated properties")
+    else:
+        validate_keyframes(errors, path, layer, scene_duration_value, allowed_props=allowed_keyframe_props)
 
 
 def validate_scene(errors: list[str], path: str, scene: Any) -> None:

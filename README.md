@@ -74,12 +74,12 @@ Layer types in a `layered` scene:
 
 Media and panel layers support:
 
-- `opacity`: static, `0..1`
+- `opacity`: static or keyframed, `0..1`
 - `scale`: static or keyframed, media layers only for now
 - `radius`: rounded mask radius in pixels
 - `border`, `border_color`, `border_opacity`
 - `start` / `end` timing
-- `keyframes`: `time`, `x`, `y`, `scale`, `ease`
+- `keyframes`: `time`, `x`, `y`, `opacity`, `scale`, `ease`
 
 Supported easing values: `linear`, `in_quad`, `out_quad`, `in_out_quad`, `in_cubic`, `out_cubic`, `in_out_cubic` plus `ease_in`/`ease_out` aliases.
 
