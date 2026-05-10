@@ -1,0 +1,39 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "transition": {"type": "fade", "duration": 0.25},
+  "scenes": [
+    {
+      "type": "card",
+      "duration": 1.8,
+      "title": "COMPOSE",
+      "subtitle": "original scenes from a small spec",
+      "background": "#050510",
+      "background2": "#18051f",
+      "accent": "#00d8ff",
+      "audio": {"type": "tone", "frequency": 164, "volume": 0.04}
+    },
+    {
+      "type": "grid",
+      "duration": 2.2,
+      "title": "space / layout",
+      "subtitle": "animated grids, not borrowed frames",
+      "accent": "#00d8ff",
+      "audio": {"type": "pulse", "frequency": 440, "volume": 0.035, "period": 0.45, "duty": 0.08}
+    },
+    {
+      "type": "orbits",
+      "duration": 2.4,
+      "title": "motion systems",
+      "subtitle": "circles, paths, particles, timing",
+      "transition": {"type": "circleopen", "duration": 0.35}
+    },
+    {
+      "type": "typewriter",
+      "duration": 4.0,
+      "header": "video-compose | generated monologue",
+      "text": "Text, motion, shapes, and timing generated here. Styles can come later.",
+      "chars_per_second": 28
+    }
+  ]
+}

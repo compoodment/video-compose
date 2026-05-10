@@ -1,0 +1,33 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "transition": {"type": "fade", "duration": 0.2},
+  "scenes": [
+    {
+      "type": "layered",
+      "duration": 4.0,
+      "background": "#02030a",
+      "audio": {"type": "tone", "frequency": 164, "volume": 0.035},
+      "layers": [
+        {
+          "type": "media",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 640,
+          "height": 360,
+          "x": 0,
+          "y": 0,
+          "opacity": 0.75
+        },
+        {
+          "type": "lower_third",
+          "text": "Lower-third text layer with automatic wrapping",
+          "wrap": 36,
+          "start": 0.45,
+          "end": 3.65
+        }
+      ]
+    }
+  ]
+}

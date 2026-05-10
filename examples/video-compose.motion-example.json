@@ -1,0 +1,63 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "transition": {"type": "fade", "duration": 0.25},
+  "audio": {
+    "scene_volume": 0.65,
+    "bed": {"type": "tone", "frequency": 82.41, "volume": 0.035, "fade_in": 0.8, "fade_out": 1.0}
+  },
+  "scenes": [
+    {
+      "type": "layered",
+      "duration": 4.4,
+      "background": "#02030a",
+      "audio": {"type": "pulse", "frequency": 620, "volume": 0.026, "period": 0.28, "duty": 0.04},
+      "layers": [
+        {
+          "type": "media",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 330,
+          "height": 190,
+          "x": 36,
+          "y": 86,
+          "border": 5,
+          "border_color": "#00d8ff",
+          "keyframes": [
+            {"time": 0, "x": 28, "y": 92},
+            {"time": 0.8, "x": 66, "y": 74, "ease": "out_cubic"},
+            {"time": 4.4, "x": 104, "y": 74, "ease": "linear"}
+          ]
+        },
+        {
+          "type": "panel",
+          "x": 362,
+          "y": 96,
+          "width": 224,
+          "height": 118,
+          "color": "#000000",
+          "opacity": 0.58,
+          "border": 3,
+          "border_color": "#ff4fd8",
+          "start": 0.4,
+          "end": 4.2,
+          "keyframes": [
+            {"time": 0.4, "x": 420, "y": 96},
+            {"time": 1.1, "x": 362, "y": 96, "ease": "out_cubic"}
+          ]
+        },
+        {
+          "type": "text",
+          "text": "text layer\ninside panel",
+          "x": 382,
+          "y": 122,
+          "size": 28,
+          "align": 7,
+          "start": 0.7,
+          "end": 4.1
+        }
+      ]
+    }
+  ]
+}

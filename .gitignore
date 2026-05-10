@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+out.mp4
+*.log
+artifacts/
+verify/

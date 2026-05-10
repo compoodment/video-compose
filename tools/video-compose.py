@@ -1,0 +1,1326 @@
+#!/usr/bin/env python3
+"""Small original video scene composer.
+
+This is intentionally general: it renders simple scenes from a JSON spec using
+Python-generated pixels plus ffmpeg assembly. Styles/presets should sit on top.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import random
+import shutil
+import subprocess
+import sys
+import textwrap
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+def ffmpeg_bin(name: str | None = None) -> str:
+    return name or shutil.which("ffmpeg") or str(Path.home() / ".local/bin/ffmpeg")
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def bundled_asset(name: str) -> str:
+    return str(repo_root() / "examples" / "assets" / name)
+
+
+def ensure_tool(path: str, label: str = "ffmpeg") -> str:
+    if shutil.which(path) or Path(path).exists():
+        return path
+    raise SystemExit(f"{label} not found: {path}")
+
+
+def run(cmd: list[str], *, input_bytes: bytes | None = None) -> None:
+    subprocess.run(cmd, input=input_bytes, check=True)
+
+
+def parse_hex(color: str) -> tuple[int, int, int]:
+    color = color.strip()
+    named = {
+        "black": "#000000",
+        "white": "#ffffff",
+        "red": "#ff3030",
+        "green": "#00ff66",
+        "blue": "#2090ff",
+        "cyan": "#00d8ff",
+        "magenta": "#ff4fd8",
+        "purple": "#7c3cff",
+    }
+    color = named.get(color.lower(), color)
+    if not color.startswith("#") or len(color) != 7:
+        raise ValueError(f"unsupported color: {color}")
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+
+
+def lerp(a: int, b: int, t: float) -> int:
+    return int(a + (b - a) * t)
+
+
+def blend(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)
+
+
+def ass_time(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def ass_escape(text: str) -> str:
+    return str(text).replace("{", "(").replace("}", ")").replace("\n", r"\N")
+
+
+def wrap_text(text: str, chars: int | None = None) -> str:
+    if not chars or chars <= 0:
+        return text
+    return "\n".join(textwrap.fill(line, width=chars) for line in str(text).splitlines())
+
+
+def ass_color(value: str) -> str:
+    value = str(value)
+    names = {
+        "white": "&HFFFFFF&",
+        "black": "&H000000&",
+        "cyan": "&HFFD800&",
+        "magenta": "&HD84FFF&",
+        "green": "&H66FF00&",
+        "red": "&H3030FF&",
+    }
+    if value.lower() in names:
+        return names[value.lower()]
+    if value.startswith("&H") and not value.endswith("&"):
+        return value + "&"
+    return value
+
+
+def esc_filter_path(path: Path) -> str:
+    return str(path).replace("\\", r"\\").replace(":", r"\:").replace("'", r"\'")
+
+
+def scene_duration(scene: dict[str, Any]) -> float:
+    return float(scene.get("duration", 2.0))
+
+
+def audio_source(scene: dict[str, Any], duration: float) -> str:
+    audio = scene.get("audio") or {"type": "silence"}
+    kind = audio.get("type", "silence")
+    if kind in ("none", "silence"):
+        return "anullsrc=channel_layout=mono:sample_rate=44100"
+    if kind == "tone":
+        frequency = float(audio.get("frequency", 220))
+        volume = float(audio.get("volume", 0.08))
+        return f"sine=frequency={frequency}:sample_rate=44100,volume={volume}"
+    if kind == "noise":
+        color = audio.get("color", "pink")
+        amplitude = float(audio.get("amplitude", audio.get("volume", 0.025)))
+        return f"anoisesrc=color={color}:amplitude={amplitude}:sample_rate=44100"
+    if kind == "pulse":
+        frequency = float(audio.get("frequency", 440))
+        volume = float(audio.get("volume", 0.08))
+        period = float(audio.get("period", 0.5))
+        duty = float(audio.get("duty", 0.16))
+        return f"sine=frequency={frequency}:sample_rate=44100,volume='{volume}*lt(mod(t,{period}),{duty})'"
+    raise SystemExit(f"unknown audio type: {kind}")
+
+
+def fit_filter(width: int, height: int, fit: str, background: str = "black") -> str:
+    if fit == "cover":
+        return f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,crop={width}:{height},setsar=1"
+    if fit == "stretch":
+        return f"scale={width}:{height}:flags=lanczos,setsar=1"
+    return f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={background},setsar=1"
+
+
+def media_source_args(source: Path, duration: float, fps: int, mode: str) -> list[str]:
+    if mode == "image":
+        return ["-loop", "1", "-t", str(duration), "-i", str(source)]
+    if mode == "video":
+        return ["-stream_loop", "-1", "-t", str(duration), "-i", str(source)]
+    suffix = source.suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".ppm", ".pgm"}:
+        return ["-loop", "1", "-t", str(duration), "-i", str(source)]
+    return ["-stream_loop", "-1", "-t", str(duration), "-i", str(source)]
+
+
+def glitch_filter(effect: dict[str, Any] | bool) -> str:
+    if not effect:
+        return ""
+    if effect is True:
+        effect = {"amount": 1.0}
+    amount = float(effect.get("amount", 1.0))
+    noise = int(effect.get("noise", 18) * amount)
+    hue = float(effect.get("hue", 10.0) * amount)
+    contrast = float(effect.get("contrast", 1.18))
+    filters = [f"noise=alls={noise}:allf=t+u", f"hue=h={hue}*sin(2*PI*t)", f"eq=contrast={contrast}:saturation=1.25"]
+    return ",".join(filters)
+
+
+def ease_expr(name: str, p: str) -> str:
+    if name in ("linear", "none"):
+        return p
+    if name in ("in_quad", "ease_in"):
+        return f"({p})*({p})"
+    if name in ("out_quad", "ease_out"):
+        return f"1-(1-({p}))*(1-({p}))"
+    if name == "in_out_quad":
+        return f"if(lt(({p}),0.5),2*({p})*({p}),1-pow(-2*({p})+2,2)/2)"
+    if name == "in_cubic":
+        return f"({p})*({p})*({p})"
+    if name == "out_cubic":
+        return f"1-pow(1-({p}),3)"
+    if name == "in_out_cubic":
+        return f"if(lt(({p}),0.5),4*({p})*({p})*({p}),1-pow(-2*({p})+2,3)/2)"
+    raise SystemExit(f"unsupported easing: {name}")
+
+
+def keyframed_expr(layer: dict[str, Any], prop: str, default: float | int, duration: float) -> str:
+    keyframes = sorted(layer.get("keyframes") or [], key=lambda item: float(item.get("time", 0)))
+    points = [(float(kf["time"]), float(kf[prop]), kf.get("ease", "linear")) for kf in keyframes if prop in kf]
+    if not points:
+        return str(default)
+    if len(points) == 1:
+        return str(points[0][1])
+    for time_value, _, _ in points:
+        if time_value < 0 or time_value > duration:
+            raise SystemExit(f"keyframe for {prop} outside scene duration: {time_value}")
+    expr = str(points[-1][1])
+    for idx in range(len(points) - 2, -1, -1):
+        t0, v0, _ = points[idx]
+        t1, v1, ease = points[idx + 1]
+        if t1 <= t0:
+            raise SystemExit(f"keyframes for {prop} must have increasing times")
+        p = f"clip((t-{t0})/{t1 - t0},0,1)"
+        eased = ease_expr(ease, p)
+        value = f"{v0}+({v1}-{v0})*({eased})"
+        expr = f"if(lt(t,{t0}),{v0},if(lte(t,{t1}),{value},{expr}))"
+    return expr
+
+
+def scene_transition(scene: dict[str, Any], default: dict[str, Any] | None) -> dict[str, Any] | None:
+    transition = scene.get("transition", default)
+    if not transition:
+        return None
+    if isinstance(transition, str):
+        transition = {"type": transition}
+    kind = transition.get("type", "fade")
+    duration = float(transition.get("duration", 0.35))
+    if kind == "none" or duration <= 0:
+        return None
+    allowed = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen", "circleclose"}
+    if kind not in allowed:
+        raise SystemExit(f"unsupported transition: {kind}")
+    return {"type": kind, "duration": duration}
+
+
+def write_ass(width: int, height: int, duration: float, events: list[dict[str, Any]], out: Path) -> None:
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {width}",
+        f"PlayResY: {height}",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Default,DejaVu Sans,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,1,0,0,0,100,100,0,0,1,2,1,5,40,40,40,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for event in events:
+        text = ass_escape(event.get("text", ""))
+        if not text:
+            continue
+        start = float(event.get("start", 0))
+        end = float(event.get("end", duration))
+        x = int(event.get("x", width // 2))
+        y = int(event.get("y", height // 2))
+        size = int(event.get("size", 48))
+        color = ass_color(event.get("color", "&H00FFFFFF&"))
+        align = int(event.get("align", 5))
+        override = rf"{{\an{align}\fs{size}\1c{color}\3c&H000000&\bord2\shad1\pos({x},{y})}}"
+        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{override}{text}")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def fill_gradient(buf: bytearray, w: int, h: int, a: tuple[int, int, int], b: tuple[int, int, int], pulse: float = 0.0) -> None:
+    for y in range(h):
+        t = y / max(1, h - 1)
+        r, g, bl = blend(a, b, t)
+        if pulse:
+            r = min(255, int(r * (1 + pulse)))
+            g = min(255, int(g * (1 + pulse)))
+            bl = min(255, int(bl * (1 + pulse)))
+        row = y * w * 3
+        for x in range(w):
+            i = row + x * 3
+            buf[i] = r
+            buf[i + 1] = g
+            buf[i + 2] = bl
+
+
+def rect(buf: bytearray, w: int, h: int, x: int, y: int, rw: int, rh: int, color: tuple[int, int, int], alpha: float = 1.0) -> None:
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(w, x + rw), min(h, y + rh)
+    cr, cg, cb = color
+    for yy in range(y0, y1):
+        row = yy * w * 3
+        for xx in range(x0, x1):
+            i = row + xx * 3
+            if alpha >= 1:
+                buf[i], buf[i + 1], buf[i + 2] = cr, cg, cb
+            else:
+                buf[i] = int(buf[i] * (1 - alpha) + cr * alpha)
+                buf[i + 1] = int(buf[i + 1] * (1 - alpha) + cg * alpha)
+                buf[i + 2] = int(buf[i + 2] * (1 - alpha) + cb * alpha)
+
+
+def circle(buf: bytearray, w: int, h: int, cx: int, cy: int, radius: int, color: tuple[int, int, int], alpha: float = 1.0) -> None:
+    r2 = radius * radius
+    x0, x1 = max(0, cx - radius), min(w - 1, cx + radius)
+    y0, y1 = max(0, cy - radius), min(h - 1, cy + radius)
+    for y in range(y0, y1 + 1):
+        dy = y - cy
+        row = y * w * 3
+        for x in range(x0, x1 + 1):
+            dx = x - cx
+            if dx * dx + dy * dy <= r2:
+                i = row + x * 3
+                if alpha >= 1:
+                    buf[i], buf[i + 1], buf[i + 2] = color
+                else:
+                    buf[i] = int(buf[i] * (1 - alpha) + color[0] * alpha)
+                    buf[i + 1] = int(buf[i + 1] * (1 - alpha) + color[1] * alpha)
+                    buf[i + 2] = int(buf[i + 2] * (1 - alpha) + color[2] * alpha)
+
+
+def line(buf: bytearray, w: int, h: int, x0: int, y0: int, x1: int, y1: int, color: tuple[int, int, int]) -> None:
+    dx = abs(x1 - x0)
+    dy = -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    while True:
+        if 0 <= x0 < w and 0 <= y0 < h:
+            i = (y0 * w + x0) * 3
+            buf[i], buf[i + 1], buf[i + 2] = color
+        if x0 == x1 and y0 == y1:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
+
+
+def add_scanlines(buf: bytearray, w: int, h: int, strength: float = 0.18) -> None:
+    for y in range(0, h, 3):
+        row = y * w * 3
+        for x in range(w):
+            i = row + x * 3
+            buf[i] = int(buf[i] * (1 - strength))
+            buf[i + 1] = int(buf[i + 1] * (1 - strength))
+            buf[i + 2] = int(buf[i + 2] * (1 - strength))
+
+
+def add_noise(buf: bytearray, amount: int, rng: random.Random) -> None:
+    if amount <= 0:
+        return
+    for i in range(0, len(buf), 3):
+        n = rng.randint(-amount, amount)
+        buf[i] = max(0, min(255, buf[i] + n))
+        buf[i + 1] = max(0, min(255, buf[i + 1] + n))
+        buf[i + 2] = max(0, min(255, buf[i + 2] + n))
+
+
+def protected_rects(glitch: dict[str, Any] | bool) -> list[tuple[int, int, int, int]]:
+    if not glitch or glitch is True:
+        return []
+    rects = []
+    for item in glitch.get("protect", []) or []:
+        rects.append((int(item.get("x", 0)), int(item.get("y", 0)), int(item.get("w", 0)), int(item.get("h", 0))))
+    return rects
+
+
+def intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+
+
+def apply_glitch(buf: bytearray, w: int, h: int, glitch: dict[str, Any] | bool, frame: int, t: float, rng: random.Random) -> None:
+    if not glitch:
+        return
+    if glitch is True:
+        glitch = {"amount": 1.0}
+    mode = glitch.get("mode", "light")
+    protected = protected_rects(glitch)
+    amount = float(glitch.get("amount", 1.0))
+    chance = float(glitch.get("chance", 0.22 if mode == "light" else 0.9))
+    if rng.random() > chance:
+        return
+    max_shift = int(glitch.get("shift", 42 if mode == "light" else 160) * amount)
+    bands = int(glitch.get("bands", 8 if mode == "light" else 90))
+    palette = [
+        (0, 255, 60),
+        (24, 255, 109),
+        (0, 234, 255),
+        (0, 183, 255),
+        (255, 0, 204),
+        (255, 42, 168),
+        (27, 0, 255),
+        (91, 0, 214),
+        (255, 32, 48),
+        (2, 3, 10),
+    ]
+    for _ in range(max(1, bands)):
+        y = rng.randrange(0, h)
+        if mode == "band_corrupt":
+            band_h = rng.choice([rng.randrange(4, 18), rng.randrange(18, 46)])
+            x0 = rng.randrange(0, max(1, int(w * 0.38)))
+            band_w = rng.randrange(max(24, int(w * 0.18)), w - x0 + 1)
+        else:
+            band_h = rng.randrange(2, max(3, int(h * 0.08)))
+            x0 = 0
+            band_w = w
+        if any(intersects((x0, y, band_w, band_h), rect) for rect in protected):
+            continue
+        shift = rng.randrange(-max_shift, max_shift + 1) if max_shift > 0 else 0
+        for yy in range(y, min(h, y + band_h)):
+            row = yy * w * 3
+            src = bytes(buf[row : row + w * 3])
+            for x in range(x0, min(w, x0 + band_w)):
+                sx = (x - shift) % w
+                di = row + x * 3
+                si = sx * 3
+                buf[di : di + 3] = src[si : si + 3]
+        if mode == "band_corrupt" and rng.random() < 0.72:
+            color = rng.choice(palette)
+            alpha = rng.uniform(0.25, 0.78)
+            rect(buf, w, h, x0, y, band_w, band_h, color, alpha)
+    if mode == "band_corrupt":
+        blocks = int(glitch.get("blocks", 40) * amount)
+        for _ in range(blocks):
+            bw = rng.randrange(12, max(14, int(w * 0.14)))
+            bh = rng.randrange(4, max(5, int(h * 0.08)))
+            x = rng.randrange(0, max(1, w - bw))
+            y = rng.randrange(0, max(1, h - bh))
+            if any(intersects((x, y, bw, bh), rect) for rect in protected):
+                continue
+            rect(buf, w, h, x, y, bw, bh, rng.choice(palette), rng.uniform(0.35, 0.85))
+        darks = int(glitch.get("dark_bands", 10) * amount)
+        for _ in range(darks):
+            y = rng.randrange(0, h)
+            if any(intersects((0, y, w, 14), rect) for rect in protected):
+                continue
+            rect(buf, w, h, 0, y, w, rng.randrange(2, 14), (2, 3, 10), rng.uniform(0.55, 0.95))
+    color_shift = int(glitch.get("rgb_shift", 3) * amount)
+    if color_shift:
+        original = bytes(buf)
+        for y in range(h):
+            row = y * w * 3
+            for x in range(w):
+                r_x = min(w - 1, max(0, x + color_shift))
+                b_x = min(w - 1, max(0, x - color_shift))
+                i = row + x * 3
+                buf[i] = original[row + r_x * 3]
+                buf[i + 2] = original[row + b_x * 3 + 2]
+
+
+def scene_events(scene: dict[str, Any], w: int, h: int, duration: float) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if scene.get("type") == "typewriter":
+        header = scene.get("header")
+        if header:
+            events.append({"text": header, "x": int(w * 0.08), "y": int(h * 0.12), "size": scene.get("header_size", 24), "align": 7, "color": "&H0000D8FF"})
+        text = str(scene.get("text", ""))
+        cps = max(1.0, float(scene.get("chars_per_second", 22)))
+        start = float(scene.get("start", 0.25))
+        step = max(1, int(scene.get("step", 2)))
+        x = int(scene.get("x", w * 0.08))
+        y = int(scene.get("y", h * 0.28))
+        size = int(scene.get("size", 30))
+        for n in range(step, len(text) + step, step):
+            visible = text[: min(n, len(text))]
+            t0 = start + max(0, n - step) / cps
+            t1 = min(duration, start + n / cps)
+            if t0 < duration:
+                events.append({"text": visible + " █", "start": t0, "end": max(t1, t0 + 0.02), "x": x, "y": y, "size": size, "align": 7, "color": "&H00FFFFFF"})
+        if text:
+            events.append({"text": text, "start": min(duration, start + len(text) / cps), "end": duration, "x": x, "y": y, "size": size, "align": 7, "color": "&H00FFFFFF"})
+        for cap in scene.get("captions", []):
+            events.append(cap)
+        return events
+
+    if scene.get("type") in {"image", "media", "layered"} or scene.get("layers"):
+        title = scene.get("title") or scene.get("text")
+        subtitle = scene.get("subtitle")
+        if title:
+            events.append({"text": title, "x": w // 2, "y": int(h * 0.10), "size": scene.get("title_size", 38), "color": "&H00FFFFFF"})
+        if subtitle:
+            events.append({"text": subtitle, "x": w // 2, "y": int(h * 0.91), "size": scene.get("subtitle_size", 24), "color": "&H00D8FF00"})
+        for layer in scene.get("layers") or []:
+            if layer.get("type") == "text":
+                events.append(
+                    {
+                        "text": wrap_text(layer.get("text", ""), layer.get("wrap")),
+                        "start": layer.get("start", 0),
+                        "end": layer.get("end", duration),
+                        "x": layer.get("x", w // 2),
+                        "y": layer.get("y", h // 2),
+                        "size": layer.get("size", 36),
+                        "color": layer.get("color", "&H00FFFFFF"),
+                        "align": layer.get("align", 5),
+                    }
+                )
+            elif layer.get("type") == "lower_third":
+                x = int(layer.get("x", 52))
+                y = int(layer.get("y", h - 124))
+                events.append(
+                    {
+                        "text": wrap_text(layer.get("text", ""), layer.get("wrap", 34)),
+                        "start": layer.get("start", 0),
+                        "end": layer.get("end", duration),
+                        "x": x + int(layer.get("text_x", 22)),
+                        "y": y + int(layer.get("text_y", 22)),
+                        "size": layer.get("size", 34),
+                        "color": layer.get("text_color", "white"),
+                        "align": layer.get("align", 7),
+                    }
+                )
+        for cap in scene.get("captions", []):
+            events.append(cap)
+        return events
+
+    title = scene.get("title") or scene.get("text")
+    subtitle = scene.get("subtitle")
+    if title:
+        events.append({"text": title, "x": w // 2, "y": int(h * 0.42), "size": scene.get("title_size", 54), "color": "&H00FFFFFF"})
+    if subtitle:
+        events.append({"text": subtitle, "x": w // 2, "y": int(h * 0.58), "size": scene.get("subtitle_size", 28), "color": "&H00D8FF00"})
+    for cap in scene.get("captions", []):
+        events.append(cap)
+    return events
+
+
+def render_card(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    bg1 = parse_hex(scene.get("background", "#050510"))
+    bg2 = parse_hex(scene.get("background2", "#120724"))
+    fill_gradient(buf, w, h, bg1, bg2, 0.03 * math.sin(t * math.pi * 2))
+    accent = parse_hex(scene.get("accent", "#00d8ff"))
+    rect(buf, w, h, 0, int(h * 0.72), w, 2, accent, 0.7)
+    rect(buf, w, h, int(w * 0.14), int(h * 0.74), int(w * 0.72), 1, accent, 0.35)
+
+
+def render_bars(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#03040b")), parse_hex(scene.get("background2", "#08021a")))
+    items = scene.get("items") or [["alpha", 0.8], ["beta", 0.55], ["gamma", 0.35], ["delta", 0.7]]
+    x = int(w * 0.18)
+    y0 = int(h * 0.32)
+    maxw = int(w * 0.64)
+    gap = max(24, int(h * 0.09))
+    colors = [parse_hex(c) for c in scene.get("colors", ["#00d8ff", "#ff4fd8", "#00ff66", "#a855ff"])]
+    progress = min(1.0, t / max(0.001, scene.get("build", 1.0)))
+    for idx, item in enumerate(items):
+        label, value = item[0], float(item[1])
+        yy = y0 + idx * gap
+        rect(buf, w, h, x, yy, maxw, 14, (20, 20, 35), 0.9)
+        wiggle = 0.03 * math.sin(t * 4 + idx)
+        bw = int(maxw * max(0, min(1, value + wiggle)) * progress)
+        rect(buf, w, h, x, yy, bw, 14, colors[idx % len(colors)], 0.95)
+        if idx < len(str(label)) + 999:
+            rect(buf, w, h, x - 12, yy, 4, 14, colors[idx % len(colors)], 0.8)
+
+
+def render_particles(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#010204")), parse_hex(scene.get("background2", "#001018")))
+    accent = parse_hex(scene.get("accent", "#00ff66"))
+    count = int(scene.get("count", 90))
+    for i in range(count):
+        px = int((math.sin(i * 12.989 + t * 0.7) * 0.5 + 0.5) * w)
+        py = int(((i * 37 + t * (20 + i % 11)) % h))
+        size = 1 + (i % 3)
+        rect(buf, w, h, px, py, size, size, accent, 0.45 + 0.35 * ((i % 5) / 5))
+    for i in range(8):
+        y = int((h * (i + 1) / 9) + math.sin(t * 1.7 + i) * 8)
+        line(buf, w, h, 0, y, w - 1, y, accent,)
+
+
+def render_wave(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#08020c")), parse_hex(scene.get("background2", "#02020a")))
+    color = parse_hex(scene.get("accent", "#ff4fd8"))
+    mid = h // 2
+    last: tuple[int, int] | None = None
+    for x in range(w):
+        y = int(mid + math.sin(x * 0.035 + t * 5) * 42 + math.sin(x * 0.011 - t * 3) * 28)
+        if last:
+            line(buf, w, h, last[0], last[1], x, y, color)
+        last = (x, y)
+    rect(buf, w, h, 0, mid, w, 1, (255, 255, 255), 0.18)
+
+
+def render_grid(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#01030a")), parse_hex(scene.get("background2", "#080414")))
+    color = parse_hex(scene.get("accent", "#00d8ff"))
+    spacing = int(scene.get("spacing", 42))
+    horizon = int(h * float(scene.get("horizon", 0.62)))
+    drift = (t * 35) % spacing
+    for x in range(-spacing, w + spacing, spacing):
+        line(buf, w, h, w // 2, horizon, int(x + drift), h - 1, color)
+    for i in range(14):
+        y = horizon + int((i / 13) ** 1.8 * (h - horizon))
+        line(buf, w, h, 0, y, w - 1, y, color)
+    rect(buf, w, h, 0, horizon, w, 2, color, 0.65)
+
+
+def render_orbits(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#020206")), parse_hex(scene.get("background2", "#09021a")))
+    cx, cy = w // 2, h // 2
+    colors = [parse_hex(c) for c in scene.get("colors", ["#00d8ff", "#ff4fd8", "#00ff66"])]
+    for idx, radius in enumerate(scene.get("radii", [45, 78, 116, 150])):
+        color = colors[idx % len(colors)]
+        steps = 96
+        last: tuple[int, int] | None = None
+        squash = 0.45 + idx * 0.08
+        for s in range(steps + 1):
+            a = 2 * math.pi * s / steps
+            x = int(cx + math.cos(a) * radius)
+            y = int(cy + math.sin(a) * radius * squash)
+            if last:
+                line(buf, w, h, last[0], last[1], x, y, color)
+            last = (x, y)
+        angle = t * (0.9 + idx * 0.25) + idx * 1.7
+        dot_x = int(cx + math.cos(angle) * radius)
+        dot_y = int(cy + math.sin(angle) * radius * squash)
+        circle(buf, w, h, dot_x, dot_y, 5 + idx % 2, color, 0.95)
+    circle(buf, w, h, cx, cy, 12, parse_hex(scene.get("core", "#ffffff")), 0.85)
+
+
+def render_typewriter(buf: bytearray, w: int, h: int, scene: dict[str, Any], t: float, rng: random.Random) -> None:
+    fill_gradient(buf, w, h, parse_hex(scene.get("background", "#020204")), parse_hex(scene.get("background2", "#050b12")))
+    accent = parse_hex(scene.get("accent", "#00d8ff"))
+    rect(buf, w, h, int(w * 0.055), int(h * 0.09), int(w * 0.89), int(h * 0.74), (0, 0, 0), 0.34)
+    rect(buf, w, h, int(w * 0.055), int(h * 0.09), int(w * 0.89), 2, accent, 0.8)
+    rect(buf, w, h, int(w * 0.055), int(h * 0.83), int(w * 0.89), 2, accent, 0.45)
+    if int(t * 2) % 2 == 0:
+        rect(buf, w, h, int(w * 0.08), int(h * 0.79), 10, 3, accent, 0.9)
+
+
+def render_scene_frames(scene: dict[str, Any], w: int, h: int, fps: int) -> bytes:
+    duration = float(scene.get("duration", 2.0))
+    frames = max(1, int(round(duration * fps)))
+    rng = random.Random(int(scene.get("seed", 1337)))
+    chunks: list[bytes] = []
+    kind = scene.get("type", "card")
+    renderers = {
+        "card": render_card,
+        "bars": render_bars,
+        "particles": render_particles,
+        "wave": render_wave,
+        "grid": render_grid,
+        "orbits": render_orbits,
+        "typewriter": render_typewriter,
+    }
+    renderer = renderers.get(kind)
+    if renderer is None:
+        raise SystemExit(f"unknown scene type: {kind}")
+    for frame in range(frames):
+        t = frame / fps
+        buf = bytearray(w * h * 3)
+        renderer(buf, w, h, scene, t, rng)
+        if scene.get("scanlines", True):
+            add_scanlines(buf, w, h, float(scene.get("scanline_strength", 0.14)))
+        add_noise(buf, int(scene.get("noise", 4)), rng)
+        apply_glitch(buf, w, h, scene.get("glitch"), frame, t, rng)
+        chunks.append(bytes(buf))
+    return b"".join(chunks)
+
+
+def render_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fps: int, ffmpeg: str) -> None:
+    if scene.get("type") == "layered" or scene.get("layers"):
+        render_layered_scene(scene, out, w=w, h=h, fps=fps, ffmpeg=ffmpeg)
+        return
+
+    if scene.get("type") in {"image", "media"} and scene.get("source"):
+        render_image_scene(scene, out, w=w, h=h, fps=fps, ffmpeg=ffmpeg)
+        return
+
+    duration = scene_duration(scene)
+    raw = render_scene_frames(scene, w, h, fps)
+    with tempfile.TemporaryDirectory(prefix="video-compose-scene-") as tmp:
+        tmpdir = Path(tmp)
+        base = tmpdir / "base.mp4"
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{w}x{h}",
+            "-r",
+            str(fps),
+            "-i",
+            "pipe:0",
+            "-f",
+            "lavfi",
+            "-t",
+            str(duration),
+            "-i",
+            audio_source(scene, duration),
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(base),
+        ]
+        run(cmd, input_bytes=raw)
+        events = scene_events(scene, w, h, duration)
+        if events:
+            subs = tmpdir / "scene.ass"
+            write_ass(w, h, duration, events, subs)
+            run([
+                ffmpeg,
+                "-y",
+                "-i",
+                str(base),
+                "-vf",
+                f"subtitles={esc_filter_path(subs)}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(out),
+            ])
+        else:
+            shutil.copy2(base, out)
+
+
+def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fps: int, ffmpeg: str) -> None:
+    duration = scene_duration(scene)
+    layers = scene.get("layers") or []
+    if not layers:
+        raise SystemExit("layered scene needs at least one layer")
+    background = scene.get("background", "black")
+
+    with tempfile.TemporaryDirectory(prefix="video-compose-layered-") as tmp:
+        tmpdir = Path(tmp)
+        base = tmpdir / "base.mp4"
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={background}:s={w}x{h}:r={fps}:d={duration}",
+        ]
+        media_inputs: dict[int, int] = {}
+        next_input = 1
+        for layer_index, layer in enumerate(layers):
+            layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+            if layer_type in {"text", "panel", "lower_third"}:
+                continue
+            if layer_type != "media":
+                raise SystemExit(f"unsupported layer type: {layer_type}")
+            source = Path(layer["source"]).expanduser()
+            if not source.exists():
+                raise SystemExit(f"layer source not found: {source}")
+            media_inputs[layer_index] = next_input
+            next_input += 1
+            cmd += media_source_args(source, duration, fps, layer.get("source_type", "auto"))
+        audio_index = next_input
+        cmd += ["-f", "lavfi", "-t", str(duration), "-i", audio_source(scene, duration)]
+
+        filters: list[str] = []
+        base_label = "0:v"
+        for idx, layer in enumerate(layers, start=1):
+            layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+            if layer_type == "text":
+                continue
+            if layer_type == "lower_third":
+                layer.setdefault("x", 52)
+                layer.setdefault("y", h - 126)
+                layer.setdefault("width", w - 104)
+                layer.setdefault("height", 92)
+                layer.setdefault("panel_color", "#000000")
+                layer.setdefault("opacity", 0.94)
+                layer.setdefault("border", 2)
+                layer.setdefault("border_color", "#00d8ff")
+                layer_type = "panel"
+            box_w = int(layer.get("width", w))
+            box_h = int(layer.get("height", h))
+            x_default = float(layer.get("x", (w - box_w) / 2))
+            y_default = float(layer.get("y", (h - box_h) / 2))
+            x_expr = keyframed_expr(layer, "x", x_default, duration)
+            y_expr = keyframed_expr(layer, "y", y_default, duration)
+            start = float(layer.get("start", 0))
+            end = float(layer.get("end", duration))
+            opacity_default = float(layer.get("opacity", 1.0))
+
+            if layer_type == "panel":
+                border = int(layer.get("border", 0))
+                if border > 0:
+                    border_label = f"pb{idx}"
+                    border_color = layer.get("border_color", "white")
+                    filters.append(
+                        f"[{base_label}]drawbox=x='{x_expr}-{border}':y='{y_expr}-{border}':w={box_w + border*2}:h={box_h + border*2}:color={border_color}:t=fill:enable='between(t,{start},{end})'[{border_label}]"
+                    )
+                    base_label = border_label
+                out_label = f"v{idx}"
+                color = layer.get("panel_color", layer.get("color", "black"))
+                filters.append(
+                    f"[{base_label}]drawbox=x='{x_expr}':y='{y_expr}':w={box_w}:h={box_h}:color={color}@{opacity_default}:t=fill:enable='between(t,{start},{end})'[{out_label}]"
+                )
+                base_label = out_label
+                continue
+
+            fit = layer.get("fit", "contain")
+            layer_filter = fit_filter(box_w, box_h, fit, layer.get("pad_color", "black"))
+            layer_glitch = glitch_filter(layer.get("glitch"))
+            if layer_glitch:
+                layer_filter += f",{layer_glitch}"
+            if opacity_default < 1.0:
+                layer_filter += f",format=rgba,colorchannelmixer=aa={opacity_default}"
+            layer_label = f"layer{idx}"
+            input_index = media_inputs[idx - 1]
+            filters.append(f"[{input_index}:v]{layer_filter}[{layer_label}]")
+
+            border = int(layer.get("border", 0))
+            if border > 0:
+                border_label = f"b{idx}"
+                border_color = layer.get("border_color", "white")
+                filters.append(
+                    f"[{base_label}]drawbox=x='{x_expr}-{border}':y='{y_expr}-{border}':w={box_w + border*2}:h={box_h + border*2}:color={border_color}:t=fill:enable='between(t,{start},{end})'[{border_label}]"
+                )
+                base_label = border_label
+
+            out_label = f"v{idx}"
+            filters.append(f"[{base_label}][{layer_label}]overlay=x='{x_expr}':y='{y_expr}':enable='between(t,{start},{end})':shortest=1[{out_label}]")
+            base_label = out_label
+
+        cmd += [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            f"[{base_label}]",
+            "-map",
+            f"{audio_index}:a",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(base),
+        ]
+        run(cmd)
+        events = scene_events(scene, w, h, duration)
+        if events:
+            subs = tmpdir / "scene.ass"
+            write_ass(w, h, duration, events, subs)
+            run([
+                ffmpeg,
+                "-y",
+                "-i",
+                str(base),
+                "-vf",
+                f"subtitles={esc_filter_path(subs)}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(out),
+            ])
+        else:
+            shutil.copy2(base, out)
+
+
+def render_image_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fps: int, ffmpeg: str) -> None:
+    duration = scene_duration(scene)
+    source = Path(scene["source"]).expanduser()
+    if not source.exists():
+        raise SystemExit(f"media source not found: {source}")
+    background = scene.get("background", "black")
+    fit = scene.get("fit", "contain")
+    box_w = int(scene.get("width", w))
+    box_h = int(scene.get("height", h))
+    x = int(scene.get("x", (w - box_w) / 2))
+    y = int(scene.get("y", (h - box_h) / 2))
+    border = int(scene.get("border", 0))
+    border_color = scene.get("border_color", "white")
+    camera = scene.get("camera") or {}
+    camera_kind = camera.get("type", "none")
+
+    with tempfile.TemporaryDirectory(prefix="video-compose-media-") as tmp:
+        tmpdir = Path(tmp)
+        base = tmpdir / "base.mp4"
+        layer_filter = fit_filter(box_w, box_h, fit, scene.get("pad_color", "black"))
+        if camera_kind == "zoom_in":
+            zoom_to = float(camera.get("to", 1.16))
+            frames = max(1, int(duration * fps))
+            step = max(0.0, (zoom_to - 1.0) / frames)
+            layer_filter = f"{layer_filter},zoompan=z='min(zoom+{step:.8f},{zoom_to})':d=1:s={box_w}x{box_h}:fps={fps}"
+        elif camera_kind == "zoom_out":
+            zoom_from = float(camera.get("from", 1.16))
+            frames = max(1, int(duration * fps))
+            step = max(0.0, (zoom_from - 1.0) / frames)
+            layer_filter = f"{layer_filter},zoompan=z='max({zoom_from}-on*{step:.8f},1)':d=1:s={box_w}x{box_h}:fps={fps}"
+        elif camera_kind == "pan":
+            axis = camera.get("axis", "x")
+            amount = float(camera.get("amount", 48))
+            overscale_w = box_w + (int(abs(amount)) if axis == "x" else 0)
+            overscale_h = box_h + (int(abs(amount)) if axis == "y" else 0)
+            base_filter = fit_filter(overscale_w, overscale_h, fit, scene.get("pad_color", "black"))
+            if axis == "y":
+                crop = f"crop={box_w}:{box_h}:(iw-{box_w})/2:({abs(amount)}*t/{duration})"
+            else:
+                crop = f"crop={box_w}:{box_h}:({abs(amount)}*t/{duration}):(ih-{box_h})/2"
+            layer_filter = f"{base_filter},{crop}"
+        elif camera_kind == "shake":
+            amount = int(camera.get("amount", 8))
+            overscale_w = box_w + amount * 2
+            overscale_h = box_h + amount * 2
+            base_filter = fit_filter(overscale_w, overscale_h, fit, scene.get("pad_color", "black"))
+            crop = f"crop={box_w}:{box_h}:{amount}+{amount}*sin(n*1.7):{amount}+{amount}*cos(n*1.3)"
+            layer_filter = f"{base_filter},{crop}"
+
+        scene_glitch = glitch_filter(scene.get("glitch"))
+        if scene_glitch:
+            layer_filter += f",{scene_glitch}"
+
+        filters = []
+        if border > 0:
+            filters.append(f"[0:v]drawbox=x={x-border}:y={y-border}:w={box_w + border*2}:h={box_h + border*2}:color={border_color}:t=fill[bg]")
+            bg_label = "bg"
+        else:
+            bg_label = "0:v"
+        filters.append(f"[1:v]{layer_filter}[layer]")
+        filters.append(f"[{bg_label}][layer]overlay={x}:{y}:shortest=1[v]")
+
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={background}:s={w}x{h}:r={fps}:d={duration}",
+            *media_source_args(source, duration, fps, scene.get("source_type", "auto")),
+            "-f",
+            "lavfi",
+            "-t",
+            str(duration),
+            "-i",
+            audio_source(scene, duration),
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[v]",
+            "-map",
+            "2:a",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(base),
+        ]
+        run(cmd)
+        events = scene_events(scene, w, h, duration)
+        if events:
+            subs = tmpdir / "scene.ass"
+            write_ass(w, h, duration, events, subs)
+            run([
+                ffmpeg,
+                "-y",
+                "-i",
+                str(base),
+                "-vf",
+                f"subtitles={esc_filter_path(subs)}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(out),
+            ])
+        else:
+            shutil.copy2(base, out)
+
+
+def quote_concat_path(path: Path) -> str:
+    return "file '" + str(path.resolve()).replace("'", "'\\''") + "'"
+
+
+def concat(clips: list[Path], out: Path, ffmpeg: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="video-compose-concat-") as tmp:
+        list_file = Path(tmp) / "clips.txt"
+        list_file.write_text("\n".join(quote_concat_path(p) for p in clips) + "\n")
+        run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", "-movflags", "+faststart", str(out)])
+
+
+def concat_with_transitions(
+    clips: list[Path],
+    scenes: list[dict[str, Any]],
+    out: Path,
+    ffmpeg: str,
+    default_transition: dict[str, Any] | None,
+) -> None:
+    if len(clips) == 1:
+        shutil.copy2(clips[0], out)
+        return
+
+    transitions: list[dict[str, Any]] = []
+    for idx in range(len(clips) - 1):
+        transition = scene_transition(scenes[idx], default_transition) or {"type": "fade", "duration": 0.01}
+        limit = max(0.01, min(scene_duration(scenes[idx]), scene_duration(scenes[idx + 1])) / 2)
+        transition = dict(transition)
+        transition["duration"] = min(float(transition["duration"]), limit)
+        transitions.append(transition)
+
+    cmd = [ffmpeg, "-y"]
+    for clip in clips:
+        cmd += ["-i", str(clip)]
+
+    filters: list[str] = []
+    video_label = "0:v"
+    audio_label = "0:a"
+    elapsed = scene_duration(scenes[0])
+    for idx, transition in enumerate(transitions, start=1):
+        duration = float(transition["duration"])
+        xfade = transition["type"]
+        offset = max(0.0, elapsed - duration)
+        next_video = f"v{idx}"
+        next_audio = f"a{idx}"
+        filters.append(f"[{video_label}][{idx}:v]xfade=transition={xfade}:duration={duration}:offset={offset}[{next_video}]")
+        filters.append(f"[{audio_label}][{idx}:a]acrossfade=d={duration}:c1=tri:c2=tri[{next_audio}]")
+        video_label = next_video
+        audio_label = next_audio
+        elapsed += scene_duration(scenes[idx]) - duration
+
+    cmd += [
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        f"[{video_label}]",
+        "-map",
+        f"[{audio_label}]",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(out),
+    ]
+    run(cmd)
+
+
+def estimated_total_duration(scenes: list[dict[str, Any]], default_transition: dict[str, Any] | None) -> float:
+    total = sum(scene_duration(scene) for scene in scenes)
+    for idx in range(len(scenes) - 1):
+        transition = scene_transition(scenes[idx], default_transition)
+        if transition:
+            total -= min(float(transition["duration"]), min(scene_duration(scenes[idx]), scene_duration(scenes[idx + 1])) / 2)
+    return max(0.01, total)
+
+
+def apply_audio_bed(input_video: Path, out: Path, ffmpeg: str, audio_config: dict[str, Any], duration: float) -> None:
+    bed = audio_config.get("bed")
+    if not bed:
+        shutil.copy2(input_video, out)
+        return
+
+    scene_volume = float(audio_config.get("scene_volume", 1.0))
+    bed_volume = float(bed.get("volume", 0.25))
+    cmd = [ffmpeg, "-y", "-i", str(input_video)]
+    if bed.get("source"):
+        source = Path(bed["source"]).expanduser()
+        if not source.exists():
+            raise SystemExit(f"audio bed source not found: {source}")
+        if bed.get("loop", True):
+            cmd += ["-stream_loop", "-1"]
+        cmd += ["-i", str(source)]
+    else:
+        cmd += ["-f", "lavfi", "-i", audio_source({"audio": bed}, duration)]
+
+    bed_filters = [f"volume={bed_volume}", f"atrim=0:{duration}", "asetpts=PTS-STARTPTS"]
+    fade_in = float(bed.get("fade_in", 0))
+    fade_out = float(bed.get("fade_out", 0))
+    if fade_in > 0:
+        bed_filters.append(f"afade=t=in:st=0:d={fade_in}")
+    if fade_out > 0:
+        bed_filters.append(f"afade=t=out:st={max(0, duration - fade_out)}:d={fade_out}")
+    filter_complex = f"[0:a]volume={scene_volume}[scene];[1:a]{','.join(bed_filters)}[bed];[scene][bed]amix=inputs=2:duration=first:dropout_transition=0[a]"
+    cmd += [
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "0:v:0",
+        "-map",
+        "[a]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(out),
+    ]
+    run(cmd)
+
+
+def demo_spec() -> dict[str, Any]:
+    return {
+        "size": "640x360",
+        "fps": 24,
+        "transition": {"type": "fade", "duration": 0.35},
+        "scenes": [
+            {"type": "card", "duration": 1.8, "title": "COMPOSE", "subtitle": "now with transitions + generated audio", "background": "#050510", "background2": "#18051f", "accent": "#00d8ff", "noise": 3, "audio": {"type": "tone", "frequency": 164, "volume": 0.045}, "transition": {"type": "wipeleft", "duration": 0.4}},
+            {"type": "grid", "duration": 2.2, "title": "space / layout", "subtitle": "animated grids, not borrowed frames", "accent": "#00d8ff", "noise": 4, "audio": {"type": "pulse", "frequency": 440, "volume": 0.045, "period": 0.45, "duty": 0.08}},
+            {"type": "orbits", "duration": 2.4, "title": "motion systems", "subtitle": "circles, paths, particles, timing", "noise": 5, "audio": {"type": "tone", "frequency": 246.94, "volume": 0.04}, "transition": {"type": "circleopen", "duration": 0.45}},
+            {"type": "bars", "duration": 2.4, "title": "data shapes", "subtitle": "rectangles + values + animation", "items": [["scene", 0.85], ["overlay", 0.67], ["motion", 0.74], ["export", 0.95]], "noise": 5, "audio": {"type": "noise", "color": "pink", "amplitude": 0.012}},
+            {"type": "typewriter", "duration": 4.0, "header": "video-compose | generated monologue", "text": "This is closer: text, motion, shapes, timing, cuts, and sound generated here. Styles can come later.", "chars_per_second": 28, "noise": 5, "audio": {"type": "pulse", "frequency": 660, "volume": 0.035, "period": 0.18, "duty": 0.035}, "transition": {"type": "slideright", "duration": 0.4}},
+            {"type": "wave", "duration": 2.2, "title": "next: media layers", "subtitle": "images / clips / masks / richer motion", "accent": "#ff4fd8", "noise": 6, "audio": {"type": "tone", "frequency": 110, "volume": 0.04}},
+        ],
+    }
+
+
+def template_spec(name: str) -> dict[str, Any]:
+    if name == "lower-third":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "transition": {"type": "fade", "duration": 0.2},
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 4.0,
+                    "background": "#02030a",
+                    "audio": {"type": "tone", "frequency": 164, "volume": 0.035},
+                    "layers": [
+                        {
+                            "type": "media",
+                            "source": bundled_asset("sample.ppm"),
+                            "source_type": "image",
+                            "fit": "cover",
+                            "width": 640,
+                            "height": 360,
+                            "x": 0,
+                            "y": 0,
+                            "opacity": 0.75,
+                        },
+                        {
+                            "type": "lower_third",
+                            "text": "Lower-third text layer with automatic wrapping",
+                            "wrap": 36,
+                            "start": 0.45,
+                            "end": 3.65,
+                        },
+                    ],
+                }
+            ],
+        }
+    if name == "motion-card":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "audio": {"bed": {"type": "tone", "frequency": 96, "volume": 0.03, "fade_in": 0.5, "fade_out": 0.5}},
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 4.0,
+                    "background": "#050510",
+                    "layers": [
+                        {"type": "panel", "x": 80, "y": 90, "width": 480, "height": 160, "color": "#000000", "opacity": 0.55, "border": 3, "border_color": "#ff4fd8", "keyframes": [{"time": 0, "x": 40}, {"time": 0.8, "x": 80, "ease": "out_cubic"}]},
+                        {"type": "text", "text": "Motion card template\nkeyframed panel + wrapped text", "x": 112, "y": 126, "size": 34, "align": 7, "wrap": 28},
+                    ],
+                }
+            ],
+        }
+    if name == "glitch-card":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "transition": {"type": "fade", "duration": 0.2},
+            "scenes": [
+                {"type": "card", "duration": 1.2, "title": "GLITCH", "subtitle": "effect pass", "background": "#050510", "background2": "#170011", "accent": "#ff4fd8", "glitch": {"amount": 1.4, "chance": 0.65, "shift": 54, "rgb_shift": 5}, "audio": {"type": "noise", "color": "pink", "amplitude": 0.018}},
+                {
+                    "type": "layered",
+                    "duration": 3.2,
+                    "background": "#02030a",
+                    "audio": {"type": "pulse", "frequency": 660, "volume": 0.035, "period": 0.18, "duty": 0.04},
+                    "layers": [
+                        {"type": "media", "source": bundled_asset("sample.ppm"), "source_type": "image", "fit": "cover", "width": 420, "height": 236, "x": 110, "y": 62, "border": 5, "border_color": "#00d8ff", "glitch": {"amount": 1.0, "noise": 20, "hue": 18}},
+                        {"type": "lower_third", "text": "Glitch is an effect, not the whole style", "wrap": 36, "start": 0.5, "end": 3.0},
+                    ],
+                },
+            ],
+        }
+    if name == "band-glitch":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "transition": {"type": "fade", "duration": 0.18},
+            "scenes": [
+                {
+                    "type": "orbits",
+                    "duration": 2.4,
+                    "title": "BAND CORRUPT",
+                    "subtitle": "chunky horizontal slice glitch",
+                    "background": "#02030a",
+                    "background2": "#120018",
+                    "noise": 12,
+                    "glitch": {"mode": "band_corrupt", "amount": 1.35, "chance": 1.0, "bands": 130, "blocks": 65, "shift": 190, "rgb_shift": 18, "dark_bands": 16, "protect": [{"x": 36, "y": 32, "w": 568, "h": 96}]},
+                    "audio": {"type": "noise", "color": "pink", "amplitude": 0.024},
+                },
+                {
+                    "type": "layered",
+                    "duration": 2.8,
+                    "background": "#02030a",
+                    "audio": {"type": "pulse", "frequency": 720, "volume": 0.04, "period": 0.16, "duty": 0.045},
+                    "layers": [
+                        {"type": "media", "source": bundled_asset("sample.ppm"), "source_type": "image", "fit": "cover", "width": 640, "height": 360, "x": 0, "y": 0, "glitch": {"amount": 1.6, "noise": 46, "hue": 32, "contrast": 1.35}},
+                        {"type": "lower_third", "text": "Strong band corruption is now a reusable effect", "wrap": 42, "start": 0.35, "end": 2.55},
+                    ],
+                },
+            ],
+        }
+    if name == "media-card":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "transition": {"type": "fade", "duration": 0.22},
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 4.2,
+                    "background": "#02030a",
+                    "audio": {"type": "tone", "frequency": 146, "volume": 0.035},
+                    "layers": [
+                        {"type": "panel", "x": 34, "y": 34, "width": 572, "height": 292, "color": "#000000", "opacity": 0.55, "border": 3, "border_color": "#00d8ff"},
+                        {"type": "media", "source": bundled_asset("sample.ppm"), "source_type": "image", "fit": "cover", "width": 360, "height": 210, "x": 58, "y": 66, "border": 4, "border_color": "#ff4fd8"},
+                        {"type": "text", "text": "Media card\nprotected text zone", "x": 444, "y": 94, "size": 32, "align": 7, "wrap": 16, "color": "white"},
+                        {"type": "text", "text": "Useful default: clip on the left, readable copy on the right.", "x": 444, "y": 178, "size": 22, "align": 7, "wrap": 22, "color": "cyan"},
+                    ],
+                }
+            ],
+        }
+    if name == "split-screen":
+        return {
+            "size": "640x360",
+            "fps": 24,
+            "transition": {"type": "fade", "duration": 0.2},
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 4.0,
+                    "background": "#050510",
+                    "audio": {"type": "pulse", "frequency": 420, "volume": 0.03, "period": 0.35, "duty": 0.06},
+                    "layers": [
+                        {"type": "media", "source": bundled_asset("sample.ppm"), "source_type": "image", "fit": "cover", "width": 286, "height": 210, "x": 36, "y": 72, "border": 4, "border_color": "#00d8ff"},
+                        {"type": "media", "source": bundled_asset("sample.ppm"), "source_type": "image", "fit": "cover", "width": 286, "height": 210, "x": 318, "y": 72, "border": 4, "border_color": "#ff4fd8"},
+                        {"type": "lower_third", "text": "Split-screen template with protected lower-third", "wrap": 42, "start": 0.4, "end": 3.7},
+                    ],
+                }
+            ],
+        }
+    raise SystemExit(f"unknown template: {name} (try lower-third, motion-card, glitch-card, band-glitch, media-card, or split-screen)")
+
+
+def parse_size(value: str | tuple[int, int]) -> tuple[int, int]:
+    if isinstance(value, tuple):
+        return value
+    if "x" not in value:
+        raise SystemExit("size must look like 1280x720")
+    a, b = value.lower().split("x", 1)
+    return int(a), int(b)
+
+
+def load_spec(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def render_spec(spec: dict[str, Any], out: Path, ffmpeg: str) -> None:
+    w, h = parse_size(spec.get("size", "1280x720"))
+    fps = int(spec.get("fps", 24))
+    scenes = spec.get("scenes") or []
+    if not scenes:
+        raise SystemExit("spec has no scenes")
+    with tempfile.TemporaryDirectory(prefix="video-compose-") as tmp:
+        tmpdir = Path(tmp)
+        clips: list[Path] = []
+        for idx, scene in enumerate(scenes):
+            clip = tmpdir / f"scene-{idx:03d}.mp4"
+            render_scene(scene, clip, w=w, h=h, fps=fps, ffmpeg=ffmpeg)
+            clips.append(clip)
+        default_transition = spec.get("transition")
+        has_transitions = bool(default_transition) or any(scene.get("transition") for scene in scenes)
+        assembled = tmpdir / "assembled.mp4"
+        if has_transitions:
+            concat_with_transitions(clips, scenes, assembled, ffmpeg, default_transition)
+        else:
+            concat(clips, assembled, ffmpeg)
+        audio_config = spec.get("audio") or {}
+        if audio_config.get("bed"):
+            apply_audio_bed(assembled, out, ffmpeg, audio_config, estimated_total_duration(scenes, default_transition))
+        else:
+            shutil.copy2(assembled, out)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Render small original videos from scene specs.")
+    p.add_argument("source", help="JSON scene spec, 'demo', or 'template:<name>'")
+    p.add_argument("out", type=Path)
+    p.add_argument("--ffmpeg", default=ffmpeg_bin())
+    args = p.parse_args()
+    ffmpeg = ensure_tool(args.ffmpeg)
+    if args.source == "demo":
+        spec = demo_spec()
+    elif args.source.startswith("template:"):
+        spec = template_spec(args.source.split(":", 1)[1])
+    else:
+        spec = load_spec(Path(args.source))
+    render_spec(spec, args.out, ffmpeg)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
