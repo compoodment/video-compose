@@ -897,7 +897,7 @@ def render_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fps: int, 
 
     duration = scene_duration(scene)
     raw = render_scene_frames(scene, w, h, fps)
-    with tempfile.TemporaryDirectory(prefix="video-compose-scene-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-scene-") as tmp:
         tmpdir = Path(tmp)
         base = tmpdir / "base.mp4"
         cmd = [
@@ -979,7 +979,7 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
         prepared_layers.append(apply_animation_presets(layer, duration=duration, w=w, h=h))
     layers = prepared_layers
 
-    with tempfile.TemporaryDirectory(prefix="video-compose-layered-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-layered-") as tmp:
         tmpdir = Path(tmp)
         base = tmpdir / "base.mp4"
         cmd = [
@@ -1166,7 +1166,7 @@ def render_image_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fps:
     camera = scene.get("camera") or {}
     camera_kind = camera.get("type", "none")
 
-    with tempfile.TemporaryDirectory(prefix="video-compose-media-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-media-") as tmp:
         tmpdir = Path(tmp)
         base = tmpdir / "base.mp4"
         layer_filter = fit_filter(box_w, box_h, fit, scene.get("pad_color", "black"))
@@ -1274,7 +1274,7 @@ def quote_concat_path(path: Path) -> str:
 
 
 def concat(clips: list[Path], out: Path, ffmpeg: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="video-compose-concat-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-concat-") as tmp:
         list_file = Path(tmp) / "clips.txt"
         list_file.write_text("\n".join(quote_concat_path(p) for p in clips) + "\n")
         run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", "-movflags", "+faststart", str(out)])
@@ -1404,7 +1404,7 @@ def demo_spec() -> dict[str, Any]:
             {"type": "grid", "duration": 2.2, "title": "space / layout", "subtitle": "animated grids, not borrowed frames", "accent": "#00d8ff", "noise": 4, "audio": {"type": "pulse", "frequency": 440, "volume": 0.045, "period": 0.45, "duty": 0.08}},
             {"type": "orbits", "duration": 2.4, "title": "motion systems", "subtitle": "circles, paths, particles, timing", "noise": 5, "audio": {"type": "tone", "frequency": 246.94, "volume": 0.04}, "transition": {"type": "circleopen", "duration": 0.45}},
             {"type": "bars", "duration": 2.4, "title": "data shapes", "subtitle": "rectangles + values + animation", "items": [["scene", 0.85], ["overlay", 0.67], ["motion", 0.74], ["export", 0.95]], "noise": 5, "audio": {"type": "noise", "color": "pink", "amplitude": 0.012}},
-            {"type": "typewriter", "duration": 4.0, "header": "video-compose | generated monologue", "text": "This is closer: text, motion, shapes, timing, cuts, and sound generated here. Styles can come later.", "chars_per_second": 28, "noise": 5, "audio": {"type": "pulse", "frequency": 660, "volume": 0.035, "period": 0.18, "duty": 0.035}, "transition": {"type": "slideright", "duration": 0.4}},
+            {"type": "typewriter", "duration": 4.0, "header": "vidkit | generated monologue", "text": "This is closer: text, motion, shapes, timing, cuts, and sound generated here. Styles can come later.", "chars_per_second": 28, "noise": 5, "audio": {"type": "pulse", "frequency": 660, "volume": 0.035, "period": 0.18, "duty": 0.035}, "transition": {"type": "slideright", "duration": 0.4}},
             {"type": "wave", "duration": 2.2, "title": "next: media layers", "subtitle": "images / clips / masks / richer motion", "accent": "#ff4fd8", "noise": 6, "audio": {"type": "tone", "frequency": 110, "volume": 0.04}},
         ],
     }
@@ -1921,7 +1921,7 @@ def render_spec(spec: dict[str, Any], out: Path, ffmpeg: str) -> None:
     scenes = spec.get("scenes") or []
     if not scenes:
         raise SystemExit("spec has no scenes")
-    with tempfile.TemporaryDirectory(prefix="video-compose-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-") as tmp:
         tmpdir = Path(tmp)
         clips: list[Path] = []
         for idx, scene in enumerate(scenes):
@@ -1954,13 +1954,13 @@ def main() -> int:
 
     if source in {"templates", "list-templates"}:
         if args.out is not None or args.extra is not None:
-            raise SystemExit("usage: video-compose templates")
+            raise SystemExit("usage: vidkit templates")
         print("\n".join(TEMPLATE_NAMES))
         return 0
 
     if source == "init":
         if args.out is None or args.extra is None:
-            raise SystemExit("usage: video-compose init <template-name|demo> <out.json>")
+            raise SystemExit("usage: vidkit init <template-name|demo> <out.json>")
         spec = source_spec(str(args.out))
         assert_valid_spec(spec)
         args.extra.parent.mkdir(parents=True, exist_ok=True)
@@ -1971,9 +1971,9 @@ def main() -> int:
 
     if source == "show":
         if args.out is None:
-            raise SystemExit("usage: video-compose show <spec|demo|template:name|template-name>")
+            raise SystemExit("usage: vidkit show <spec|demo|template:name|template-name>")
         if args.extra is not None:
-            raise SystemExit("usage: video-compose show <spec|demo|template:name|template-name>")
+            raise SystemExit("usage: vidkit show <spec|demo|template:name|template-name>")
         spec = source_spec(str(args.out))
         assert_valid_spec(spec)
         print_json(spec)
@@ -1981,9 +1981,9 @@ def main() -> int:
 
     if source == "validate":
         if args.out is None:
-            raise SystemExit("usage: video-compose validate <spec|demo|template:name>")
+            raise SystemExit("usage: vidkit validate <spec|demo|template:name>")
         if args.extra is not None:
-            raise SystemExit("usage: video-compose validate <spec|demo|template:name>")
+            raise SystemExit("usage: vidkit validate <spec|demo|template:name>")
         source = str(args.out)
         args.validate_only = True
         args.out = None

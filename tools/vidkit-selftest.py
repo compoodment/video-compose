@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight behavioral tests for video-compose."""
+"""Lightweight behavioral tests for vidkit."""
 
 from __future__ import annotations
 
@@ -55,26 +55,26 @@ def average_frame(video: Path, timestamp: float) -> float:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="video-compose-selftest-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-selftest-") as tmp:
         tmpdir = Path(tmp)
 
-        templates = run([bin_path("video-compose"), "templates"]).stdout.splitlines()
+        templates = run([wrapper_path("vidkit"), "templates"]).stdout.splitlines()
         if "media-card" not in templates or "split-screen" not in templates:
             raise SystemExit(f"template list selftest failed: {templates}")
         initialized = tmpdir / "initialized.json"
-        run([bin_path("video-compose"), "init", "media-card", str(initialized)])
-        run([bin_path("video-compose"), "--validate-only", str(initialized)])
-        shown = run([bin_path("video-compose"), "show", "template:media-card"]).stdout
+        run([wrapper_path("vidkit"), "init", "media-card", str(initialized)])
+        run([wrapper_path("vidkit"), "--validate-only", str(initialized)])
+        shown = run([wrapper_path("vidkit"), "show", "template:media-card"]).stdout
         if "examples/assets/sample.ppm" not in shown:
             raise SystemExit("template show selftest failed: expected portable sample asset path")
-        failed = run([bin_path("video-compose"), "templates", "unexpected"], check=False)
+        failed = run([wrapper_path("vidkit"), "templates", "unexpected"], check=False)
         if failed.returncode == 0:
             raise SystemExit("extra-argument selftest failed")
 
         external = tmpdir / "external"
         external.mkdir()
-        run([wrapper_path("video-compose"), "init", "media-card", "starter.json"], cwd=external)
-        run([wrapper_path("video-compose"), "--validate-only", "starter.json"], cwd=external)
+        run([wrapper_path("vidkit"), "init", "media-card", "starter.json"], cwd=external)
+        run([wrapper_path("vidkit"), "--validate-only", "starter.json"], cwd=external)
         if not (external / "examples" / "assets" / "sample.ppm").exists():
             raise SystemExit("wrapper init asset-copy selftest failed")
 
@@ -108,8 +108,8 @@ def main() -> int:
         opacity_path = tmpdir / "opacity.json"
         opacity_video = tmpdir / "opacity.mp4"
         write_json(opacity_path, opacity_spec)
-        run([bin_path("video-compose"), "--validate-only", str(opacity_path)])
-        run([bin_path("video-compose"), str(opacity_path), str(opacity_video)])
+        run([wrapper_path("vidkit"), "--validate-only", str(opacity_path)])
+        run([wrapper_path("vidkit"), str(opacity_path), str(opacity_video)])
         start_avg = average_frame(opacity_video, 0.0)
         late_avg = average_frame(opacity_video, 1.0)
         if not (start_avg < 5 and late_avg > 240):
@@ -142,8 +142,8 @@ def main() -> int:
         animate_path = tmpdir / "animate.json"
         animate_video = tmpdir / "animate.mp4"
         write_json(animate_path, animate_spec)
-        run([bin_path("video-compose"), "--validate-only", str(animate_path)])
-        run([bin_path("video-compose"), str(animate_path), str(animate_video)])
+        run([wrapper_path("vidkit"), "--validate-only", str(animate_path)])
+        run([wrapper_path("vidkit"), str(animate_path), str(animate_video)])
         animate_start = average_frame(animate_video, 0.0)
         animate_mid = average_frame(animate_video, 0.8)
         if not (animate_start < 5 and animate_mid > 20):
@@ -155,7 +155,7 @@ def main() -> int:
         }
         invalid_text_path = tmpdir / "invalid-text.json"
         write_json(invalid_text_path, invalid_text)
-        failed = run([bin_path("video-compose"), "--validate-only", str(invalid_text_path)], check=False)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_text_path)], check=False)
         if failed.returncode == 0 or "keyframes are not supported" not in (failed.stdout + failed.stderr):
             raise SystemExit("invalid text keyframe selftest failed")
 
@@ -165,7 +165,7 @@ def main() -> int:
         }
         invalid_animate_path = tmpdir / "invalid-animate.json"
         write_json(invalid_animate_path, invalid_animate)
-        failed = run([bin_path("video-compose"), "--validate-only", str(invalid_animate_path)], check=False)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_animate_path)], check=False)
         if failed.returncode == 0 or "unsupported preset" not in (failed.stdout + failed.stderr):
             raise SystemExit("invalid animate preset selftest failed")
 
@@ -175,7 +175,7 @@ def main() -> int:
         }
         invalid_panel_pop_path = tmpdir / "invalid-panel-pop.json"
         write_json(invalid_panel_pop_path, invalid_panel_pop)
-        failed = run([bin_path("video-compose"), "--validate-only", str(invalid_panel_pop_path)], check=False)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_panel_pop_path)], check=False)
         if failed.returncode == 0 or "media layers" not in (failed.stdout + failed.stderr):
             raise SystemExit("invalid panel pop selftest failed")
 

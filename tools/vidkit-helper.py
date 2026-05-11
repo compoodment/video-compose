@@ -394,7 +394,7 @@ def cmd_speed(args: argparse.Namespace) -> int:
 
 def cmd_concat(args: argparse.Namespace) -> int:
     ffmpeg = ensure_tool(args.ffmpeg)
-    with tempfile.TemporaryDirectory(prefix="video-kit-concat-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-helper-concat-") as tmp:
         list_file = Path(tmp) / "clips.txt"
         list_file.write_text("\n".join(quote_concat_path(p) for p in args.inputs) + "\n")
         cmd = [
@@ -425,7 +425,7 @@ def cmd_concat(args: argparse.Namespace) -> int:
 def cmd_card(args: argparse.Namespace) -> int:
     ffmpeg = ensure_tool(args.ffmpeg)
     width, height = args.size
-    with tempfile.TemporaryDirectory(prefix="video-kit-card-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-helper-card-") as tmp:
         subs = Path(tmp) / "card.ass"
         write_ass_caption(
             args.text,
@@ -463,7 +463,7 @@ def cmd_caption(args: argparse.Namespace) -> int:
     ffmpeg = ensure_tool(args.ffmpeg)
     duration = args.duration or probe_duration(args.input)
     width, height = args.size
-    with tempfile.TemporaryDirectory(prefix="video-kit-caption-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-helper-caption-") as tmp:
         subs = Path(tmp) / "caption.ass"
         write_ass_caption(
             args.text,
@@ -526,7 +526,7 @@ def cmd_fade(args: argparse.Namespace) -> int:
 def cmd_slideshow(args: argparse.Namespace) -> int:
     ffmpeg = ensure_tool(args.ffmpeg)
     width, height = args.size
-    with tempfile.TemporaryDirectory(prefix="video-kit-slideshow-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-helper-slideshow-") as tmp:
         tmpdir = Path(tmp)
         clips: list[Path] = []
         for idx, image in enumerate(args.images):
@@ -587,7 +587,7 @@ def cmd_remix(args: argparse.Namespace) -> int:
         f"noise=alls={args.noise}:allf=t+u",
     ]
     vf = ",".join(vf_parts)
-    with tempfile.TemporaryDirectory(prefix="video-kit-remix-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidkit-helper-remix-") as tmp:
         tmpdir = Path(tmp)
         if args.text:
             caption = tmpdir / "caption.ass"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render and probe the core video-compose templates.
+"""Render and probe the core vidkit templates.
 
 Keeps verification repeatable while the composer evolves.
 """
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "artifacts/video-compose/verify"
+OUT = ROOT / "artifacts/vidkit/verify"
 TEMPLATES = ["lower-third", "motion-card", "glitch-card", "band-glitch", "media-card", "split-screen"]
 CONTACTS = {"lower-third", "band-glitch", "split-screen"}
 
@@ -23,6 +23,13 @@ def bin_path(name: str) -> str:
     if local.exists():
         return str(local)
     return shutil.which(name) or str(Path.home() / f".local/bin/{name}")
+
+
+def wrapper_path(name: str) -> str:
+    wrapper = ROOT / "bin" / name
+    if wrapper.exists():
+        return str(wrapper)
+    return bin_path(name)
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -48,8 +55,8 @@ def main() -> int:
     summary: dict[str, dict] = {}
     for template in TEMPLATES:
         mp4 = OUT / f"{template}.mp4"
-        run([bin_path("video-compose"), "--validate-only", f"template:{template}"])
-        run([bin_path("video-compose"), f"template:{template}", str(mp4)])
+        run([wrapper_path("vidkit"), "--validate-only", f"template:{template}"])
+        run([wrapper_path("vidkit"), f"template:{template}", str(mp4)])
         info = ffprobe(mp4)
         summary[template] = info
         streams = info.get("streams", [])
@@ -58,7 +65,7 @@ def main() -> int:
         if not has_video or not has_audio:
             raise SystemExit(f"bad streams for {template}: {streams}")
         if template in CONTACTS:
-            run([bin_path("video-kit"), "contact", str(mp4), str(OUT / f"{template}-contact.jpg"), "--interval", "0.8", "--cols", "4", "--scale", "240"])
+            run([bin_path("vidkit-helper"), "contact", str(mp4), str(OUT / f"{template}-contact.jpg"), "--interval", "0.8", "--cols", "4", "--scale", "240"])
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"verified {len(TEMPLATES)} templates -> {OUT}")
     return 0

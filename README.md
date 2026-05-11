@@ -1,4 +1,4 @@
-# video-compose
+# vidkit
 
 A tiny scripted motion-graphics/video assembly toolkit for AI assistants and command-line workflows.
 
@@ -18,18 +18,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor standards, issue quality 
 ## Quick start
 
 ```bash
-python3 tools/video-compose.py templates
-python3 tools/video-compose.py template:media-card out.mp4
-python3 tools/video-compose.py init media-card starter.json
-python3 tools/video-compose-verify.py
+python3 tools/vidkit-compose.py templates
+python3 tools/vidkit-compose.py template:media-card out.mp4
+python3 tools/vidkit-compose.py init media-card starter.json
+python3 tools/vidkit-verify.py
 ```
 
 Optional local wrappers are included under `bin/`:
 
 ```bash
 export PATH="$PWD/bin:$PATH"
-video-compose template:band-glitch glitch.mp4
-video-compose-selftest
+vidkit template:band-glitch glitch.mp4
+vidkit-selftest
 ```
 
 Core templates:
@@ -46,18 +46,18 @@ Core templates:
 Render a JSON spec:
 
 ```bash
-python3 tools/video-compose.py examples/video-compose.lower-third-example.json out.mp4
+python3 tools/vidkit-compose.py examples/vidkit.lower-third-example.json out.mp4
 ```
 
 Discover/export/validate without rendering:
 
 ```bash
-python3 tools/video-compose.py templates
-python3 tools/video-compose.py show template:split-screen
-python3 tools/video-compose.py init split-screen starter.json
-python3 tools/video-compose.py --validate-only examples/video-compose.motion-polish-example.json
+python3 tools/vidkit-compose.py templates
+python3 tools/vidkit-compose.py show template:split-screen
+python3 tools/vidkit-compose.py init split-screen starter.json
+python3 tools/vidkit-compose.py --validate-only examples/vidkit.motion-polish-example.json
 # or
-python3 tools/video-compose.py validate template:split-screen
+python3 tools/vidkit-compose.py validate template:split-screen
 ```
 
 Specs can define generated scenes, layered media, text/panels, keyframes, transitions, generated audio, and audio-bed mixing. `init` writes a starter JSON file and copies bundled sample assets beside it so the starter validates outside the repo checkout.
@@ -115,25 +115,25 @@ Generated audio: `silence`, `tone`, `noise`, `pulse`. A top-level audio bed can 
 ## Examples
 
 ```bash
-python3 tools/video-compose.py examples/video-compose.example.json example.mp4
-python3 tools/video-compose.py examples/video-compose.motion-example.json motion.mp4
-python3 tools/video-compose.py examples/video-compose.motion-polish-example.json polish.mp4
-python3 tools/video-compose.py examples/video-compose.animation-presets-example.json presets.mp4
+python3 tools/vidkit-compose.py examples/vidkit.example.json example.mp4
+python3 tools/vidkit-compose.py examples/vidkit.motion-example.json motion.mp4
+python3 tools/vidkit-compose.py examples/vidkit.motion-polish-example.json polish.mp4
+python3 tools/vidkit-compose.py examples/vidkit.animation-presets-example.json presets.mp4
 ```
 
 `examples/assets/sample.ppm` is bundled so the examples and templates work without private local media.
 
 ## Helper tool
 
-`tools/video-kit.py` provides practical ffmpeg helpers: trim, contact sheets, frame extraction, GIF export, mux audio, burn subtitles, crop/scale/rotate/speed/concat, title cards, captions, fades, slideshow, and remix.
+`tools/vidkit-helper.py` provides practical ffmpeg helpers: trim, contact sheets, frame extraction, GIF export, mux audio, burn subtitles, crop/scale/rotate/speed/concat, title cards, captions, fades, slideshow, and remix.
 
 ## Verification
 
 ```bash
-python3 tools/video-compose-verify.py
+python3 tools/vidkit-verify.py
 ```
 
-The verifier validates and renders the six built-in templates, probes H.264/AAC streams with `ffprobe`, and creates contact sheets for selected templates. `tools/video-compose-selftest.py` adds focused behavioral checks for template listing/export, validation, opacity keyframes, and animation presets.
+The verifier validates and renders the six built-in templates, probes H.264/AAC streams with `ffprobe`, and creates contact sheets for selected templates. `tools/vidkit-selftest.py` adds focused behavioral checks for template listing/export, validation, opacity keyframes, and animation presets.
 
 ## OpenClaw skill
 

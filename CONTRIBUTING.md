@@ -53,7 +53,7 @@ New user-facing features should usually include one of:
 - a small example JSON under `examples/`
 - a built-in template update
 - a focused self-test fixture
-- a rendered verification artifact from `video-compose-verify`
+- a rendered verification artifact from `vidkit-verify`
 
 Examples should be public-safe and should not depend on private files from a local workspace.
 
@@ -62,8 +62,8 @@ Examples should be public-safe and should not depend on private files from a loc
 Use the smallest meaningful gate for the change:
 
 - JSON validation for spec/schema changes
-- `python3 tools/video-compose-selftest.py` for behavioral renderer changes
-- `python3 tools/video-compose-verify.py` for template/render coverage
+- `python3 tools/vidkit-selftest.py` for behavioral renderer changes
+- `python3 tools/vidkit-verify.py` for template/render coverage
 - `ffprobe` checks for emitted video/audio streams
 - contact sheets or representative frames for visual features
 

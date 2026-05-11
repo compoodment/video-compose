@@ -31,7 +31,7 @@
     {
       "type": "typewriter",
       "duration": 4.0,
-      "header": "video-compose | generated monologue",
+      "header": "vidkit | generated monologue",
       "text": "Text, motion, shapes, and timing generated here. Styles can come later.",
       "chars_per_second": 28
     }

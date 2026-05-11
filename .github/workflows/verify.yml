@@ -15,18 +15,18 @@ jobs:
         run: python3 -m compileall tools
       - name: Validate examples
         run: |
-          python3 tools/video-compose.py --validate-only examples/video-compose.example.json
-          python3 tools/video-compose.py --validate-only examples/video-compose.motion-example.json
-          python3 tools/video-compose.py --validate-only examples/video-compose.lower-third-example.json
-          python3 tools/video-compose.py --validate-only examples/video-compose.motion-polish-example.json
-          python3 tools/video-compose.py --validate-only examples/video-compose.animation-presets-example.json
+          python3 tools/vidkit-compose.py --validate-only examples/vidkit.example.json
+          python3 tools/vidkit-compose.py --validate-only examples/vidkit.motion-example.json
+          python3 tools/vidkit-compose.py --validate-only examples/vidkit.lower-third-example.json
+          python3 tools/vidkit-compose.py --validate-only examples/vidkit.motion-polish-example.json
+          python3 tools/vidkit-compose.py --validate-only examples/vidkit.animation-presets-example.json
       - name: Run behavioral self-tests
-        run: python3 tools/video-compose-selftest.py
+        run: python3 tools/vidkit-selftest.py
       - name: Render and probe templates
-        run: python3 tools/video-compose-verify.py
+        run: python3 tools/vidkit-verify.py
       - name: Upload verification artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: video-compose-verify
-          path: artifacts/video-compose/verify
+          name: vidkit-verify
+          path: artifacts/vidkit/verify
