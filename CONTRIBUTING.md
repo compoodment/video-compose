@@ -6,7 +6,7 @@ The goal is not to become a full editor. The goal is to make it easy to describe
 
 ## Project taste
 
-Good Vidkit features should create **creative leverage**: they should make new kinds of videos easier to build, not just hardcode one demo.
+Good Vidkit features should create **creative leverage**: they should make new kinds of videos easier to build from reusable pieces.
 
 Prefer features that help compose visuals from reusable parts:
 
@@ -20,7 +20,7 @@ Prefer features that help compose visuals from reusable parts:
 - sound cues
 - verification artifacts
 
-Avoid features that only add a single narrow effect unless they expose a reusable pattern.
+Prefer reusable patterns over isolated effects.
 
 ## Non-negotiables
 
@@ -33,7 +33,7 @@ Avoid features that only add a single narrow effect unless they expose a reusabl
 
 ## Issue quality standard
 
-Issues are project memory. A good issue should let someone resume the work later without needing the original chat.
+Issues are project memory. A good issue should let someone resume the work later without needing prior discussion context.
 
 Feature issues should include:
 
@@ -61,12 +61,12 @@ Before implementing a feature, answer:
 - What new thing can users make after this lands?
 - Can it be expressed cleanly in JSON or a simple CLI command?
 - Does it compose with existing scenes, layers, templates, and helper tools?
-- Is it general enough to use outside the motivating demo?
+- Is it general enough to use in more than one project or workflow?
 - What is the smallest public example that proves it?
 - What validation errors should users see for bad input?
 - What verification proves the output works?
 
-If the answer is “write custom Python for this one video,” it may belong in an example/artifact, not the core engine.
+If the answer is “write custom Python for one output,” it may belong in an example or artifact, not the core engine.
 
 ## Implementation standards
 
@@ -77,7 +77,7 @@ If the answer is “write custom Python for this one video,” it may belong in 
 - Preserve existing examples/templates unless a breaking change is deliberate and documented.
 - When adding a spec field, update validation, docs, and at least one example together.
 - Keep randomness deterministic where practical. If randomness is part of the feature, expose a seed or keep it local to generated visuals.
-- Do not bake Coda-specific taste, private paths, or one-off jokes into generic primitives.
+- Do not bake private paths, project-specific taste, or one-off content into generic primitives.
 
 ## Examples and templates
 
@@ -95,7 +95,7 @@ Examples should be:
 - short enough to understand
 - visually useful, not just technically valid
 
-If an example exists only to exercise a field, keep it minimal. If it is meant to demonstrate creative direction, make it look intentional.
+If an example exists only to exercise a field, keep it minimal. If it is meant to demonstrate a workflow, make the output look intentional.
 
 ## Verification expectations
 
@@ -168,6 +168,6 @@ Be careful with:
 - private local assets
 - copyrighted media or sound packs
 - broad plugin systems before the core API is stable
-- features that only serve one joke or one demo
+- features that only serve one output
 
-Vidkit should stay small, inspectable, and fun to use.
+Vidkit should stay small, inspectable, and useful.
