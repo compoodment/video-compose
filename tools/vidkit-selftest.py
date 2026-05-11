@@ -221,6 +221,34 @@ def main() -> int:
         if failed.returncode == 0 or "media layers" not in (failed.stdout + failed.stderr):
             raise SystemExit("invalid panel pop selftest failed")
 
+        camera_sprite_example = ROOT / "examples" / "vidkit.camera-sprite-example.json"
+        camera_sprite_video = tmpdir / "camera-sprite.mp4"
+        run([wrapper_path("vidkit"), "--validate-only", str(camera_sprite_example)])
+        run([wrapper_path("vidkit"), str(camera_sprite_example), str(camera_sprite_video)])
+        camera_sprite_avg = average_frame(camera_sprite_video, 2.8)
+        if camera_sprite_avg < 15:
+            raise SystemExit(f"camera/sprite example selftest failed: avg={camera_sprite_avg:.2f}")
+
+        invalid_sprite = {
+            "size": "160x90",
+            "scenes": [{"type": "layered", "duration": 1, "layers": [{"type": "media", "source": "examples/assets/sample.ppm", "sprite_animate": "teleport"}]}],
+        }
+        invalid_sprite_path = tmpdir / "invalid-sprite.json"
+        write_json(invalid_sprite_path, invalid_sprite)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_sprite_path)], check=False)
+        if failed.returncode == 0 or "unsupported sprite animation preset" not in (failed.stdout + failed.stderr):
+            raise SystemExit("invalid sprite animation selftest failed")
+
+        invalid_camera = {
+            "size": "160x90",
+            "scenes": [{"type": "layered", "duration": 1, "camera": {"keyframes": [{"time": 0, "scale": 1}, {"time": 1.2, "scale": 1.1}]}, "layers": [{"type": "panel"}]}],
+        }
+        invalid_camera_path = tmpdir / "invalid-camera.json"
+        write_json(invalid_camera_path, invalid_camera)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_camera_path)], check=False)
+        if failed.returncode == 0 or "outside scene duration" not in (failed.stdout + failed.stderr):
+            raise SystemExit("invalid camera keyframe selftest failed")
+
         invalid_shape = {
             "size": "160x90",
             "scenes": [{"type": "layered", "duration": 1, "layers": [{"type": "shape", "shape": "spinner"}]}],

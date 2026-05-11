@@ -31,6 +31,7 @@ CAMERA_TYPES = {"none", "zoom_in", "zoom_out", "pan", "shake"}
 TRANSITION_TYPES = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen", "circleclose", "none"}
 EASING_TYPES = {"linear", "none", "in_quad", "ease_in", "out_quad", "ease_out", "in_out_quad", "in_cubic", "out_cubic", "in_out_cubic"}
 ANIMATION_PRESETS = {"fade", "fade_in", "fade_out", "slide_left", "slide_right", "slide_up", "slide_down", "pop", "none"}
+SPRITE_ANIMATION_PRESETS = {"blink", "bounce", "jitter", "squash", "pop", "slap"}
 TEMPLATE_NAMES = ("lower-third", "motion-card", "glitch-card", "band-glitch", "media-card", "split-screen")
 
 
@@ -488,6 +489,112 @@ def apply_animation_presets(layer: dict[str, Any], *, duration: float, w: int, h
     return out
 
 
+def sprite_animation_configs(layer: dict[str, Any]) -> list[dict[str, Any]]:
+    value = layer.get("sprite_animate")
+    if not value:
+        value = layer.get("sprite_animation")
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [{"preset": value}]
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        configs = []
+        for item in value:
+            if isinstance(item, str):
+                configs.append({"preset": item})
+            elif isinstance(item, dict):
+                configs.append(item)
+            else:
+                raise SystemExit("sprite_animate entries must be strings or objects")
+        return configs
+    raise SystemExit("sprite_animate must be a string, object, or list")
+
+
+def apply_sprite_animation_presets(layer: dict[str, Any], *, duration: float, w: int, h: int) -> dict[str, Any]:
+    configs = sprite_animation_configs(layer)
+    if not configs:
+        return layer
+
+    out = dict(layer)
+    frames = [dict(frame) for frame in (layer.get("keyframes") or [])]
+    explicit_props = {key for frame in frames for key in frame if key in {"x", "y", "opacity", "scale"}}
+    box_w = int(layer.get("width", w))
+    box_h = int(layer.get("height", h))
+    base_x = float(layer.get("x", (w - box_w) / 2))
+    base_y = float(layer.get("y", (h - box_h) / 2))
+    base_opacity = float(layer.get("opacity", 1.0))
+    base_scale = float(layer.get("scale", 1.0))
+
+    for config in configs:
+        preset = str(config.get("preset", config.get("type", config.get("name", ""))))
+        if preset in ("none", "off"):
+            continue
+        if preset not in SPRITE_ANIMATION_PRESETS:
+            raise SystemExit(f"unsupported sprite animation preset: {preset}")
+        start = max(0.0, float(config.get("start", 0.0)))
+        span = min(duration - start, max(0.0, float(config.get("duration", duration - start))))
+        if span <= 0:
+            continue
+        end = start + span
+        ease = config.get("ease", "out_cubic")
+        if preset == "blink" and "opacity" not in explicit_props:
+            low = max(0.0, min(1.0, float(config.get("min_opacity", 0.12))))
+            add_keyframe_value(frames, start, "opacity", base_opacity)
+            add_keyframe_value(frames, start + span * 0.20, "opacity", low)
+            add_keyframe_value(frames, start + span * 0.34, "opacity", base_opacity)
+            add_keyframe_value(frames, start + span * 0.56, "opacity", low)
+            add_keyframe_value(frames, start + span * 0.70, "opacity", base_opacity)
+        elif preset == "bounce" and "y" not in explicit_props:
+            amount = float(config.get("amount", max(10.0, box_h * 0.12)))
+            add_keyframe_value(frames, start, "y", base_y)
+            add_keyframe_value(frames, start + span * 0.32, "y", base_y - amount, ease)
+            add_keyframe_value(frames, start + span * 0.62, "y", base_y + amount * 0.22, "in_out_quad")
+            add_keyframe_value(frames, end, "y", base_y, "out_cubic")
+        elif preset == "jitter":
+            amount = float(config.get("amount", 8))
+            steps = max(3, int(config.get("steps", 6)))
+            if "x" not in explicit_props:
+                add_keyframe_value(frames, start, "x", base_x)
+            if "y" not in explicit_props:
+                add_keyframe_value(frames, start, "y", base_y)
+            for step in range(1, steps):
+                t = start + span * step / steps
+                direction = -1 if step % 2 else 1
+                if "x" not in explicit_props:
+                    add_keyframe_value(frames, t, "x", base_x + direction * amount)
+                if "y" not in explicit_props:
+                    add_keyframe_value(frames, t, "y", base_y + (-direction) * amount * 0.55)
+            if "x" not in explicit_props:
+                add_keyframe_value(frames, end, "x", base_x)
+            if "y" not in explicit_props:
+                add_keyframe_value(frames, end, "y", base_y)
+        elif preset == "squash" and "scale" not in explicit_props:
+            amount = float(config.get("amount", 0.16))
+            add_keyframe_value(frames, start, "scale", base_scale)
+            add_keyframe_value(frames, start + span * 0.32, "scale", max(0.05, base_scale * (1 - amount)), "in_out_quad")
+            add_keyframe_value(frames, start + span * 0.58, "scale", base_scale * (1 + amount * 0.55), ease)
+            add_keyframe_value(frames, end, "scale", base_scale, "out_cubic")
+        elif preset == "pop" and "scale" not in explicit_props:
+            add_keyframe_value(frames, start, "scale", base_scale * float(config.get("from", 0.70)))
+            add_keyframe_value(frames, start + span * 0.48, "scale", base_scale * float(config.get("overshoot", 1.14)), ease)
+            add_keyframe_value(frames, end, "scale", base_scale, "out_cubic")
+        elif preset == "slap":
+            amount = float(config.get("amount", max(16.0, box_w * 0.10)))
+            if "x" not in explicit_props:
+                add_keyframe_value(frames, start, "x", base_x - amount)
+                add_keyframe_value(frames, start + span * 0.24, "x", base_x + amount * 0.30, "out_cubic")
+                add_keyframe_value(frames, end, "x", base_x, "out_cubic")
+            if "scale" not in explicit_props:
+                add_keyframe_value(frames, start, "scale", base_scale * 1.10)
+                add_keyframe_value(frames, start + span * 0.24, "scale", base_scale * 0.90, "in_out_quad")
+                add_keyframe_value(frames, end, "scale", base_scale, "out_cubic")
+
+    out["keyframes"] = sorted(frames, key=lambda frame: float(frame.get("time", 0)))
+    return out
+
+
 def layer_start_end(layer: dict[str, Any], duration: float) -> tuple[float, float]:
     return float(layer.get("start", 0)), float(layer.get("end", duration))
 
@@ -749,6 +856,68 @@ def scene_transition(scene: dict[str, Any], default: dict[str, Any] | None) -> d
     if kind not in allowed:
         raise SystemExit(f"unsupported transition: {kind}")
     return {"type": kind, "duration": duration}
+
+
+def camera_shake_config(camera: dict[str, Any], duration: float) -> dict[str, Any] | None:
+    shake = camera.get("shake")
+    if not shake and camera.get("type") == "shake":
+        shake = camera
+    if not shake:
+        return None
+    if shake is True:
+        shake = {}
+    if not isinstance(shake, dict):
+        raise SystemExit("camera.shake must be an object")
+    start = max(0.0, float(shake.get("start", 0.0)))
+    end = min(duration, float(shake.get("end", duration)))
+    amount = max(0.0, float(shake.get("amount", 8.0)))
+    frequency = max(0.001, float(shake.get("frequency", 18.0)))
+    return {"start": start, "end": end, "amount": amount, "frequency": frequency}
+
+
+def camera_margin(camera: dict[str, Any], duration: float, *, w: int, h: int) -> tuple[int, int]:
+    max_x = abs(float(camera.get("x", 0.0)))
+    max_y = abs(float(camera.get("y", 0.0)))
+    for frame in camera.get("keyframes") or []:
+        if "x" in frame:
+            max_x = max(max_x, abs(float(frame["x"])))
+        if "y" in frame:
+            max_y = max(max_y, abs(float(frame["y"])))
+    shake = camera_shake_config(camera, duration)
+    if shake:
+        max_x += float(shake["amount"])
+        max_y += float(shake["amount"])
+    return int(math.ceil(max_x + 2)), int(math.ceil(max_y + 2))
+
+
+def add_layered_camera_filter(filters: list[str], source_label: str, out_label: str, camera: dict[str, Any], *, duration: float, w: int, h: int) -> str:
+    if not camera or camera.get("type", "none") in {"none", "off"}:
+        return source_label
+    x_expr = keyframed_expr(camera, "x", float(camera.get("x", 0.0)), duration)
+    y_expr = keyframed_expr(camera, "y", float(camera.get("y", 0.0)), duration)
+    scale_expr = keyframed_expr(camera, "scale", float(camera.get("scale", 1.0)), duration)
+    shake = camera_shake_config(camera, duration)
+    if shake:
+        start = shake["start"]
+        end = shake["end"]
+        amount = shake["amount"]
+        frequency = shake["frequency"]
+        shake_x = f"if(between(t,{start},{end}),{amount}*sin(t*{frequency}*2*PI),0)"
+        shake_y = f"if(between(t,{start},{end}),{amount}*cos(t*{frequency * 1.37}*2*PI),0)"
+        x_expr = f"({x_expr})+({shake_x})"
+        y_expr = f"({y_expr})+({shake_y})"
+    margin_x, margin_y = camera_margin(camera, duration, w=w, h=h)
+    min_w = w + margin_x * 2
+    min_h = h + margin_y * 2
+    scaled_label = f"{out_label}scaled"
+    filters.append(
+        f"[{source_label}]scale=w='{ffexpr(f'max({min_w},trunc(iw*({scale_expr})/2)*2)')}':"
+        f"h='{ffexpr(f'max({min_h},trunc(ih*({scale_expr})/2)*2)')}':eval=frame[{scaled_label}]"
+    )
+    crop_x = f"clip((iw-{w})/2+({x_expr}),0,iw-{w})"
+    crop_y = f"clip((ih-{h})/2+({y_expr}),0,ih-{h})"
+    filters.append(f"[{scaled_label}]crop={w}:{h}:x='{ffexpr(crop_x)}':y='{ffexpr(crop_y)}'[{out_label}]")
+    return out_label
 
 
 def write_ass(width: int, height: int, duration: float, events: list[dict[str, Any]], out: Path) -> None:
@@ -1272,7 +1441,10 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             layer.setdefault("border", 2)
             layer.setdefault("border_color", "#00d8ff")
             layer.setdefault("radius", 14)
-        prepared_layers.append(apply_animation_presets(layer, duration=duration, w=w, h=h))
+        layer = apply_animation_presets(layer, duration=duration, w=w, h=h)
+        if (layer.get("type") or ("media" if layer.get("source") else "panel")) == "media":
+            layer = apply_sprite_animation_presets(layer, duration=duration, w=w, h=h)
+        prepared_layers.append(layer)
     layers = prepared_layers
 
     with tempfile.TemporaryDirectory(prefix="vidkit-layered-") as tmp:
@@ -1401,6 +1573,10 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             out_label = f"v{idx}"
             filters.append(f"[{base_label}][{layer_label}]overlay=x='{x_expr}':y='{y_expr}':enable='between(t,{start},{end})':shortest=1[{out_label}]")
             base_label = out_label
+
+        camera = scene.get("camera") or {}
+        if isinstance(camera, dict) and camera.get("type", "keyframes") not in {"none", "off"}:
+            base_label = add_layered_camera_filter(filters, base_label, "camera", camera, duration=duration, w=w, h=h)
 
         if filters:
             cmd += ["-filter_complex", ";".join(filters), "-map", f"[{base_label}]"]
@@ -2001,6 +2177,46 @@ def validate_transition(errors: list[str], path: str, transition: Any) -> None:
     validate_positive_number(errors, f"{path}.duration", duration, allow_zero=True)
 
 
+def validate_layered_camera(errors: list[str], path: str, camera: Any, *, duration: float) -> None:
+    if camera is None:
+        return
+    if not isinstance(camera, dict):
+        errors.append(f"{path} must be an object")
+        return
+    kind = camera.get("type", "keyframes")
+    if kind not in {"keyframes", "none", "off", "shake"}:
+        errors.append(f"{path}.type unsupported layered camera: {kind}")
+    for field in ("x", "y"):
+        if field in camera:
+            try:
+                float(camera[field])
+            except (TypeError, ValueError):
+                errors.append(f"{path}.{field} must be a number")
+    if "scale" in camera:
+        validate_positive_number(errors, f"{path}.scale", camera["scale"])
+    if camera.get("keyframes"):
+        validate_keyframes(errors, path, camera, duration, allowed_props={"x", "y", "scale"})
+    shake = camera.get("shake")
+    if kind == "shake" and not shake:
+        shake = camera
+    if shake:
+        if not isinstance(shake, dict):
+            errors.append(f"{path}.shake must be an object")
+            return
+        for field in ("start", "end", "amount", "frequency"):
+            if field in shake:
+                validate_positive_number(errors, f"{path}.shake.{field}", shake[field], allow_zero=(field != "frequency"))
+        try:
+            start = float(shake.get("start", 0))
+            end = float(shake.get("end", duration))
+            if start >= end:
+                errors.append(f"{path}.shake.start must be before end")
+            if end > duration:
+                errors.append(f"{path}.shake.end exceeds scene duration {duration}")
+        except (TypeError, ValueError):
+            pass
+
+
 def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], duration: float, *, allowed_props: set[str]) -> None:
     keyframes = owner.get("keyframes") or []
     if not isinstance(keyframes, list):
@@ -2082,6 +2298,48 @@ def validate_animation(errors: list[str], path: str, layer: dict[str, Any], *, l
             errors.append(f"{path}.animate.{key} unsupported easing: {animate[key]}")
     if layer_type != "media" and any(preset in {"pop"} for preset in (animate.get("type"), animate.get("in"), animate.get("out"))):
         errors.append(f"{path}.animate pop uses scale and is only supported for media layers")
+
+
+def validate_sprite_animation(errors: list[str], path: str, layer: dict[str, Any], *, layer_type: str) -> None:
+    value = layer.get("sprite_animate")
+    if value is None:
+        value = layer.get("sprite_animation")
+    if value is None:
+        return
+    if layer_type != "media":
+        errors.append(f"{path}.sprite_animate is only supported for media layers")
+        return
+    configs: list[Any]
+    if isinstance(value, (str, dict)):
+        configs = [value]
+    elif isinstance(value, list):
+        configs = value
+    else:
+        errors.append(f"{path}.sprite_animate must be a string, object, or list")
+        return
+    for idx, item in enumerate(configs):
+        item_path = f"{path}.sprite_animate[{idx}]" if isinstance(value, list) else f"{path}.sprite_animate"
+        if isinstance(item, str):
+            if item not in SPRITE_ANIMATION_PRESETS and item != "off":
+                errors.append(f"{item_path} unsupported sprite animation preset: {item}")
+            continue
+        if not isinstance(item, dict):
+            errors.append(f"{item_path} must be a string or object")
+            continue
+        known = {"preset", "type", "name", "start", "duration", "amount", "steps", "ease", "min_opacity", "from", "overshoot"}
+        for key in item:
+            if key not in known:
+                errors.append(f"{item_path}.{key} unsupported sprite animation option")
+        preset = item.get("preset", item.get("type", item.get("name")))
+        if not preset:
+            errors.append(f"{item_path}.preset is required")
+        elif preset not in SPRITE_ANIMATION_PRESETS and preset != "off":
+            errors.append(f"{item_path}.preset unsupported sprite animation preset: {preset}")
+        for key in ("start", "duration", "amount", "steps", "min_opacity", "from", "overshoot"):
+            if key in item:
+                validate_positive_number(errors, f"{item_path}.{key}", item[key], allow_zero=(key in {"start", "duration", "amount", "min_opacity"}))
+        if "ease" in item and item["ease"] not in EASING_TYPES:
+            errors.append(f"{item_path}.ease unsupported easing: {item['ease']}")
 
 
 def validate_shape_layer(errors: list[str], path: str, layer: dict[str, Any]) -> None:
@@ -2193,6 +2451,7 @@ def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_v
     else:
         allowed_keyframe_props = set()
     validate_animation(errors, path, layer, layer_type=layer_type, allowed_props=allowed_keyframe_props)
+    validate_sprite_animation(errors, path, layer, layer_type=layer_type)
     if layer.get("keyframes") and not allowed_keyframe_props:
         errors.append(f"{path}.keyframes are not supported for {layer_type} layers; use media/panel layers for animated properties")
     else:
@@ -2217,6 +2476,8 @@ def validate_scene(errors: list[str], path: str, scene: Any) -> None:
     validate_color(errors, f"{path}.background", scene.get("background"))
     validate_color(errors, f"{path}.background2", scene.get("background2"))
     validate_color(errors, f"{path}.accent", scene.get("accent"))
+    if kind == "layered" or scene.get("layers"):
+        validate_layered_camera(errors, f"{path}.camera", scene.get("camera"), duration=duration_value)
     if kind in {"image", "media"}:
         source = scene.get("source")
         if not source:
