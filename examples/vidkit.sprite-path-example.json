@@ -1,0 +1,108 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "scenes": [
+    {
+      "type": "layered",
+      "duration": 3.8,
+      "background": "#0b1220",
+      "audio": {
+        "type": "sfx",
+        "preset": "whoosh",
+        "duration": 0.8,
+        "volume": 0.45
+      },
+      "layers": [
+        {
+          "type": "shape",
+          "shape": "window",
+          "x": 52,
+          "y": 36,
+          "width": 536,
+          "height": 278,
+          "fill": "#e5e7eb",
+          "border_color": "#38bdf8",
+          "chrome_color": "#111827",
+          "title": "quarterly-dashboard-final-FINAL.json"
+        },
+        {
+          "type": "panel",
+          "x": 84,
+          "y": 92,
+          "width": 198,
+          "height": 18,
+          "panel_color": "#94a3b8",
+          "radius": 6
+        },
+        {
+          "type": "panel",
+          "x": 84,
+          "y": 130,
+          "width": 372,
+          "height": 18,
+          "panel_color": "#cbd5e1",
+          "radius": 6
+        },
+        {
+          "type": "panel",
+          "x": 84,
+          "y": 168,
+          "width": 286,
+          "height": 18,
+          "panel_color": "#cbd5e1",
+          "radius": 6
+        },
+        {
+          "type": "preset",
+          "preset": "stamp",
+          "text": "SHIP IT",
+          "x": 406,
+          "y": 228,
+          "width": 142,
+          "height": 54,
+          "color": "#dc2626",
+          "border": 4,
+          "size": 30,
+          "start": 2.2
+        },
+        {
+          "type": "sprite",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 96,
+          "height": 72,
+          "radius": 14,
+          "border": 3,
+          "border_color": "#facc15",
+          "path": {
+            "type": "points",
+            "ease": "in_out_cubic",
+            "points": [
+              {"time": 0.0, "x": 34, "y": 238},
+              {"time": 0.9, "x": 188, "y": 84, "ease": "out_cubic"},
+              {"time": 1.7, "x": 326, "y": 142},
+              {"time": 2.7, "x": 444, "y": 164, "ease": "out_quad"},
+              {"time": 3.8, "x": 496, "y": 230}
+            ]
+          },
+          "sprite_animate": {
+            "preset": "blink",
+            "start": 2.75,
+            "duration": 0.55,
+            "min_opacity": 0.35
+          }
+        },
+        {
+          "type": "text",
+          "text": "sample.ppm arrives to approve the fake UI",
+          "x": 92,
+          "y": 292,
+          "align": 7,
+          "size": 20,
+          "color": "#111827"
+        }
+      ]
+    }
+  ]
+}
