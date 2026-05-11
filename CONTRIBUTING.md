@@ -1,88 +1,135 @@
-# Contributor standards
+# Contributing to Vidkit
 
-This project is a small scripted video toolkit. Contributions should keep it useful for AI assistants, command-line workflows, and fast creative iteration without turning it into a heavy editor framework.
+Vidkit is a small scripted video toolkit for AI assistants, command-line workflows, and fast creative iteration.
 
-## Core values
+The goal is not to become a full editor. The goal is to make it easy to describe, render, inspect, and iterate on short composed videos with clear specs and repeatable outputs.
 
-- **Creative leverage first:** features should make it easier to compose new kinds of videos, not just add another narrow demo.
-- **Dependency-light by default:** prefer Python standard library plus `ffmpeg`/`ffprobe`. Add dependencies only when the value is large and the fallback story is clear.
-- **Scriptable over interactive:** this is a render/assembly toolkit, not a GUI editor.
-- **Readable artifacts:** specs, examples, generated files, and issue descriptions should be easy to inspect after context is gone.
-- **Small verified slices:** land features in focused steps with examples and verification instead of broad rewrites.
+## Project taste
+
+Good Vidkit features should create **creative leverage**: they should make new kinds of videos easier to build, not just hardcode one demo.
+
+Prefer features that help compose visuals from reusable parts:
+
+- scenes
+- layers
+- sprites
+- text treatments
+- shapes
+- camera moves
+- transitions
+- sound cues
+- verification artifacts
+
+Avoid features that only add a single narrow effect unless they expose a reusable pattern.
+
+## Non-negotiables
+
+- **Scriptable first.** Vidkit is a CLI/spec renderer, not a GUI editor.
+- **Dependency-light.** Prefer Python standard library plus `ffmpeg`/`ffprobe`. Add dependencies only when the value is substantial and the maintenance cost is acceptable.
+- **Portable examples.** Public examples must run without private local media or machine-specific paths.
+- **Readable specs.** A person should be able to inspect a spec and understand the video structure.
+- **Verified output.** Rendering without errors is not enough when visual or audio quality matters.
+- **Small changes.** Prefer focused, reviewable increments over broad rewrites.
 
 ## Issue quality standard
 
-Issues are part of the project memory. A good issue should let someone resume work weeks later without needing the original chat.
+Issues are project memory. A good issue should let someone resume the work later without needing the original chat.
 
-Every feature issue should include:
+Feature issues should include:
 
-1. **Problem / opportunity** — what creative or workflow gap this solves.
-2. **User-facing shape** — what the CLI/spec/API should feel like from a caller's point of view.
-3. **Examples** — at least one concrete spec snippet, command, or storyboard beat.
-4. **Acceptance criteria** — observable conditions that make the issue done.
-5. **Verification** — commands or artifact checks expected before closing.
-6. **Non-goals** — what this issue deliberately does not try to solve.
+1. **Problem / opportunity** — the creative or workflow gap.
+2. **User-facing shape** — how the CLI/spec/API should feel to the caller.
+3. **Examples** — a concrete command, spec snippet, or storyboard beat.
+4. **Acceptance criteria** — observable requirements for calling the issue done.
+5. **Verification** — commands, probes, contact sheets, frames, or audio checks expected before close.
+6. **Non-goals** — what the issue intentionally does not solve.
 
-Prefer issue titles that name the feature and outcome, e.g. `Add reusable comedy beat presets`, not `Improve video stuff`.
+Good title:
 
-## Feature design checklist
+- `Add reusable comedy beat presets`
+
+Weak title:
+
+- `Improve videos`
+
+If an issue cannot name its output or verification path, it is probably not ready to implement.
+
+## Design checklist
 
 Before implementing a feature, answer:
 
-- Can this be expressed cleanly in JSON specs or a simple CLI command?
-- Does it compose with existing scenes/layers/templates?
-- Does it avoid hardcoding one demo's taste into the core engine?
-- Is there a small example that proves the feature?
-- Can verification run locally without private media?
-- What happens when input is missing, malformed, or unsupported?
+- What new thing can users make after this lands?
+- Can it be expressed cleanly in JSON or a simple CLI command?
+- Does it compose with existing scenes, layers, templates, and helper tools?
+- Is it general enough to use outside the motivating demo?
+- What is the smallest public example that proves it?
+- What validation errors should users see for bad input?
+- What verification proves the output works?
+
+If the answer is “write custom Python for this one video,” it may belong in an example/artifact, not the core engine.
 
 ## Implementation standards
 
-- Keep the core renderer dependency-light and understandable.
-- Prefer explicit validation errors over silent fallback when a spec is wrong.
-- Keep generated temporary files under the relevant output/artifact directory.
-- Avoid hidden global state; specs should be portable when possible.
-- Preserve backwards compatibility for existing examples/templates unless an issue explicitly calls for a breaking change.
-- When adding a spec field, update docs/examples and validation together.
-- Use deterministic behavior where practical; if randomness is useful, allow seeding or keep it local to generated visuals.
+- Keep the core renderer understandable.
+- Prefer explicit validation errors over silent fallback.
+- Keep temporary/generated files under the relevant output or artifact directory.
+- Avoid hidden global state. Specs should be portable when practical.
+- Preserve existing examples/templates unless a breaking change is deliberate and documented.
+- When adding a spec field, update validation, docs, and at least one example together.
+- Keep randomness deterministic where practical. If randomness is part of the feature, expose a seed or keep it local to generated visuals.
+- Do not bake Coda-specific taste, private paths, or one-off jokes into generic primitives.
 
 ## Examples and templates
 
-New user-facing features should usually include one of:
+User-facing features should usually include at least one of:
 
 - a small example JSON under `examples/`
-- a built-in template update
+- a built-in template or template variant
 - a focused self-test fixture
 - a rendered verification artifact from `vidkit-verify`
 
-Examples should be public-safe and should not depend on private files from a local workspace.
+Examples should be:
+
+- public-safe
+- dependency-light
+- short enough to understand
+- visually useful, not just technically valid
+
+If an example exists only to exercise a field, keep it minimal. If it is meant to demonstrate creative direction, make it look intentional.
 
 ## Verification expectations
 
-Use the smallest meaningful gate for the change:
+Use the smallest meaningful gate for the change.
 
+Common checks:
+
+- `python3 -m compileall tools`
 - JSON validation for spec/schema changes
-- `python3 tools/vidkit-selftest.py` for behavioral renderer changes
+- `python3 tools/vidkit-selftest.py` for renderer behavior
 - `python3 tools/vidkit-verify.py` for template/render coverage
-- `ffprobe` checks for emitted video/audio streams
+- `ffprobe` checks for video/audio streams
 - contact sheets or representative frames for visual features
+- audio level checks when sound matters
 
-When visual quality matters, include a short note about what was inspected, not just that ffmpeg exited.
+Important: an audio stream is not proof that audio is usable. If sound is part of the feature, check audibility/levels.
+
+Important: an ffmpeg success exit is not proof that a visual feature is readable. If text/layout/composition matters, inspect frames or a contact sheet.
 
 ## Documentation expectations
 
-Documentation should explain the caller-facing behavior, not internal history.
+Documentation should explain caller-facing behavior, not implementation history.
 
 Update docs when a change affects:
 
 - CLI commands
 - JSON spec fields
-- layer/scene capabilities
+- scene or layer capabilities
 - templates
+- helper commands
 - verification workflow
 - contributor or issue standards
 
-Keep examples concise. If a concept needs a long explanation, prefer a dedicated doc section over stuffing comments into a giant sample.
+Keep docs concise. Prefer one clear example over a long abstract explanation.
 
 ## Pull request standard
 
@@ -92,15 +139,35 @@ A good PR description includes:
 - why it changed
 - how to try it
 - what was verified
-- any known gaps or follow-up issues
+- visual/audio artifacts inspected, when relevant
+- known gaps or follow-up issues
 
-Do not claim a creative/video feature is done without either a render artifact, a contact sheet/frame inspection, or a clear reason visual verification was not possible.
+Do not claim a creative/video feature is done without either:
+
+- a render artifact,
+- a contact sheet or representative frame inspection,
+- an audio-level check when sound matters,
+- or a clear note explaining why visual/audio verification was not possible.
 
 ## Backlog hygiene
 
-Backlog items should stay actionable:
+Keep the backlog useful:
 
 - Split large ideas into coherent feature issues.
 - Link related issues instead of duplicating context.
 - Close or rewrite issues that no longer match the project direction.
-- Prefer a few high-quality issues over many vague placeholders.
+- Promote patterns from experiments into issues only when they are likely to be reused.
+- Prefer fewer high-quality issues over many vague placeholders.
+
+## What not to add casually
+
+Be careful with:
+
+- heavyweight dependencies
+- GUI/editor ambitions
+- private local assets
+- copyrighted media or sound packs
+- broad plugin systems before the core API is stable
+- features that only serve one joke or one demo
+
+Vidkit should stay small, inspectable, and fun to use.
