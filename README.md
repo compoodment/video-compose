@@ -11,6 +11,10 @@ It is not an interactive editor. It renders videos from JSON scene specs using P
 
 No Python package dependencies are required.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor standards, issue quality expectations, feature design guidance, and verification rules.
+
 ## Quick start
 
 ```bash

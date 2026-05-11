@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+.backups/
 out.mp4
 *.log
 artifacts/
