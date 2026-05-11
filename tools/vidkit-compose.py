@@ -21,7 +21,7 @@ from typing import Any
 
 
 SCENE_TYPES = {"card", "bars", "particles", "wave", "grid", "orbits", "typewriter", "image", "media", "layered"}
-LAYER_TYPES = {"media", "panel", "text", "lower_third", "shape", "preset"}
+LAYER_TYPES = {"media", "sprite", "panel", "text", "lower_third", "shape", "preset"}
 SHAPE_NAMES = {"progress_bar", "checkbox", "arrow", "cursor", "speech_bubble", "file_icon", "window"}
 PRESET_NAMES = {"error_dialog", "stamp", "meme_caption", "file_label", "terminal_prompt", "form_field", "warning_banner"}
 AUDIO_TYPES = {"none", "silence", "tone", "noise", "pulse", "sfx"}
@@ -32,6 +32,7 @@ TRANSITION_TYPES = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", 
 EASING_TYPES = {"linear", "none", "in_quad", "ease_in", "out_quad", "ease_out", "in_out_quad", "in_cubic", "out_cubic", "in_out_cubic"}
 ANIMATION_PRESETS = {"fade", "fade_in", "fade_out", "slide_left", "slide_right", "slide_up", "slide_down", "pop", "none"}
 SPRITE_ANIMATION_PRESETS = {"blink", "bounce", "jitter", "squash", "pop", "slap"}
+PATH_TYPES = {"points"}
 TEMPLATE_NAMES = ("lower-third", "motion-card", "glitch-card", "band-glitch", "media-card", "split-screen")
 
 
@@ -324,6 +325,41 @@ def keyframed_expr(layer: dict[str, Any], prop: str, default: float | int, durat
 
 def has_keyframed_prop(layer: dict[str, Any], prop: str) -> bool:
     return any(prop in keyframe for keyframe in (layer.get("keyframes") or []))
+
+
+def normalized_layer_type(layer: dict[str, Any]) -> str:
+    layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+    return "media" if layer_type == "sprite" else layer_type
+
+
+def expand_path_keyframes(layer: dict[str, Any]) -> dict[str, Any]:
+    path = layer.get("path")
+    if not path:
+        return layer
+    if not isinstance(path, dict):
+        raise SystemExit("layer path must be an object")
+    kind = path.get("type", "points")
+    if kind != "points":
+        raise SystemExit(f"unsupported path type: {kind}")
+    points = path.get("points")
+    if not isinstance(points, list) or not points:
+        raise SystemExit("path.points must be a non-empty list")
+
+    out = dict(layer)
+    frames = [dict(frame) for frame in (layer.get("keyframes") or [])]
+    default_ease = path.get("ease", path.get("default_ease", "linear"))
+    for point in points:
+        frame = {
+            "time": float(point["time"]),
+            "x": float(point["x"]),
+            "y": float(point["y"]),
+        }
+        ease = point.get("ease", default_ease)
+        if ease:
+            frame["ease"] = ease
+        frames.append(frame)
+    out["keyframes"] = sorted(frames, key=lambda frame: float(frame.get("time", 0)))
+    return out
 
 
 def keyframed_value(layer: dict[str, Any], prop: str, default: float | int, t: float, duration: float) -> float:
@@ -832,13 +868,16 @@ def expand_preset_layer(layer: dict[str, Any], *, duration: float, scene_w: int,
 def expand_layers(layers: list[dict[str, Any]], *, duration: float, scene_w: int, scene_h: int) -> list[dict[str, Any]]:
     expanded: list[dict[str, Any]] = []
     for layer in layers:
-        layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+        layer_type = normalized_layer_type(layer)
         if layer_type == "shape":
             expanded.extend(expand_shape_layer(layer, duration=duration, scene_w=scene_w, scene_h=scene_h))
         elif layer_type == "preset":
             expanded.extend(expand_preset_layer(layer, duration=duration, scene_w=scene_w, scene_h=scene_h))
         else:
-            expanded.append(layer)
+            expanded_layer = expand_path_keyframes(layer)
+            if layer.get("type") == "sprite":
+                expanded_layer = {**expanded_layer, "type": "media"}
+            expanded.append(expanded_layer)
     return expanded
 
 
@@ -1442,7 +1481,7 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             layer.setdefault("border_color", "#00d8ff")
             layer.setdefault("radius", 14)
         layer = apply_animation_presets(layer, duration=duration, w=w, h=h)
-        if (layer.get("type") or ("media" if layer.get("source") else "panel")) == "media":
+        if normalized_layer_type(layer) == "media":
             layer = apply_sprite_animation_presets(layer, duration=duration, w=w, h=h)
         prepared_layers.append(layer)
     layers = prepared_layers
@@ -1462,7 +1501,7 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
         alpha_inputs: dict[int, int] = {}
         next_input = 1
         for layer_index, layer in enumerate(layers):
-            layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+            layer_type = normalized_layer_type(layer)
             if layer_type in {"text", "panel", "lower_third"}:
                 pass
             elif layer_type != "media":
@@ -1505,7 +1544,7 @@ def render_layered_scene(scene: dict[str, Any], out: Path, *, w: int, h: int, fp
             return out_label
 
         for idx, layer in enumerate(layers, start=1):
-            layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+            layer_type = normalized_layer_type(layer)
             if layer_type == "text":
                 continue
             if layer_type == "lower_third":
@@ -2263,6 +2302,62 @@ def validate_keyframes(errors: list[str], path: str, owner: dict[str, Any], dura
         errors.append(f"{path}.keyframes must be in increasing time order")
 
 
+def validate_motion_path(errors: list[str], path: str, layer: dict[str, Any], duration: float, *, layer_type: str) -> None:
+    motion_path = layer.get("path")
+    if motion_path is None:
+        return
+    if layer_type != "media":
+        errors.append(f"{path}.path is only supported for media and sprite layers")
+        return
+    if layer.get("keyframes"):
+        errors.append(f"{path}.path cannot be combined with keyframes; use one motion source")
+    if not isinstance(motion_path, dict):
+        errors.append(f"{path}.path must be an object")
+        return
+    known = {"type", "points", "ease", "default_ease"}
+    for key in motion_path:
+        if key not in known:
+            errors.append(f"{path}.path.{key} unsupported path option")
+    kind = motion_path.get("type", "points")
+    if kind not in PATH_TYPES:
+        errors.append(f"{path}.path.type unsupported path type: {kind}")
+        return
+    default_ease = motion_path.get("ease", motion_path.get("default_ease", "linear"))
+    if default_ease not in EASING_TYPES:
+        errors.append(f"{path}.path.ease unsupported easing: {default_ease}")
+    points = motion_path.get("points")
+    if not isinstance(points, list) or not points:
+        errors.append(f"{path}.path.points must be a non-empty list")
+        return
+    seen_times: list[float] = []
+    for idx, point in enumerate(points):
+        point_path = f"{path}.path.points[{idx}]"
+        if not isinstance(point, dict):
+            errors.append(f"{point_path} must be an object")
+            continue
+        for key in point:
+            if key not in {"time", "x", "y", "ease"}:
+                errors.append(f"{point_path}.{key} unsupported point property")
+        for field in ("time", "x", "y"):
+            if field not in point:
+                errors.append(f"{point_path}.{field} is required")
+                continue
+            try:
+                value = float(point[field])
+            except (TypeError, ValueError):
+                errors.append(f"{point_path}.{field} must be a number")
+                continue
+            if field == "time":
+                if value < 0 or value > duration:
+                    errors.append(f"{point_path}.time outside scene duration 0..{duration}")
+                seen_times.append(value)
+        ease = point.get("ease", default_ease)
+        if ease not in EASING_TYPES:
+            errors.append(f"{point_path}.ease unsupported easing: {ease}")
+    if seen_times != sorted(seen_times):
+        errors.append(f"{path}.path.points must be in increasing time order")
+
+
 def validate_animation(errors: list[str], path: str, layer: dict[str, Any], *, layer_type: str, allowed_props: set[str]) -> None:
     animate = layer.get("animate")
     if not animate:
@@ -2392,7 +2487,7 @@ def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_v
     if not isinstance(layer, dict):
         errors.append(f"{path} must be an object")
         return
-    layer_type = layer.get("type") or ("media" if layer.get("source") else "panel")
+    layer_type = normalized_layer_type(layer)
     if layer_type not in LAYER_TYPES:
         errors.append(f"{path}.type unsupported layer type: {layer_type}")
         return
@@ -2410,7 +2505,8 @@ def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_v
     if layer_type == "media":
         source = layer.get("source")
         if not source:
-            errors.append(f"{path}.source is required for media layers")
+            label = "sprite" if layer.get("type") == "sprite" else "media"
+            errors.append(f"{path}.source is required for {label} layers")
         else:
             source_path = Path(source).expanduser()
             if not source_path.exists():
@@ -2452,6 +2548,7 @@ def validate_layer(errors: list[str], path: str, layer: Any, *, scene_duration_v
         allowed_keyframe_props = set()
     validate_animation(errors, path, layer, layer_type=layer_type, allowed_props=allowed_keyframe_props)
     validate_sprite_animation(errors, path, layer, layer_type=layer_type)
+    validate_motion_path(errors, path, layer, scene_duration_value, layer_type=layer_type)
     if layer.get("keyframes") and not allowed_keyframe_props:
         errors.append(f"{path}.keyframes are not supported for {layer_type} layers; use media/panel layers for animated properties")
     else:

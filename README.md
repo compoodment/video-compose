@@ -84,22 +84,45 @@ Scene types:
 Layer types in a `layered` scene:
 
 - `media`: image/video layer with `source`, `fit`, `width`, `height`, `x`, `y`
+- `sprite`: clearer media-layer alias for image/video elements that move through a scene
 - `panel`: colored rectangle layer, useful for title cards and UI shapes
 - `lower_third`: panel preset plus text event defaults
 - `text`: subtitle/label event rendered through ASS subtitles
 - `shape`: reusable primitives expanded into panel/text layers
 - `preset`: reusable text/dialog/stamp treatments expanded into panel/text/shape layers
 
-Media and panel layers support:
+Media, sprite, and panel layers support:
 
 - `opacity`: static or keyframed, `0..1`
-- `scale`: static or keyframed, media layers only for now
+- `scale`: static or keyframed, media/sprite layers only for now
 - `radius`: rounded mask radius in pixels
 - `border`, `border_color`, `border_opacity`
 - `start` / `end` timing
 - `keyframes`: `time`, `x`, `y`, `opacity`, `scale`, `ease`
 - `animate`: preset entrance/exit animation
 - `sprite_animate`: media-layer helper animation presets expanded into the same keyframe path
+
+Sprite layers require `source` and otherwise render like media layers. They can use ordinary `keyframes`, or a `path` object that expands to `x`/`y` keyframes before rendering:
+
+```json
+{
+  "type": "sprite",
+  "source": "examples/assets/sample.ppm",
+  "width": 92,
+  "height": 68,
+  "path": {
+    "type": "points",
+    "ease": "in_out_cubic",
+    "points": [
+      {"time": 0.0, "x": 36, "y": 218},
+      {"time": 1.4, "x": 286, "y": 92, "ease": "out_cubic"},
+      {"time": 3.0, "x": 494, "y": 198}
+    ]
+  }
+}
+```
+
+`path` currently supports only `type: "points"`. Points must be in increasing time order and within the scene duration. Use either `path` or explicit `keyframes` on a layer, not both.
 
 Supported easing values: `linear`, `in_quad`, `out_quad`, `in_out_quad`, `in_cubic`, `out_cubic`, `in_out_cubic` plus `ease_in`/`ease_out` aliases.
 
@@ -146,6 +169,7 @@ python3 tools/vidkit-compose.py examples/vidkit.motion-example.json motion.mp4
 python3 tools/vidkit-compose.py examples/vidkit.motion-polish-example.json polish.mp4
 python3 tools/vidkit-compose.py examples/vidkit.animation-presets-example.json presets.mp4
 python3 tools/vidkit-compose.py examples/vidkit.camera-sprite-example.json camera-sprite.mp4
+python3 tools/vidkit-compose.py examples/vidkit.sprite-path-example.json sprite-path.mp4
 python3 tools/vidkit-compose.py examples/vidkit.shapes-presets-example.json shapes-presets.mp4
 python3 tools/vidkit-compose.py examples/vidkit.sfx-example.json sfx.mp4
 ```

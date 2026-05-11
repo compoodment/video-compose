@@ -229,6 +229,79 @@ def main() -> int:
         if camera_sprite_avg < 15:
             raise SystemExit(f"camera/sprite example selftest failed: avg={camera_sprite_avg:.2f}")
 
+        sprite_path_example = ROOT / "examples" / "vidkit.sprite-path-example.json"
+        sprite_path_video = tmpdir / "sprite-path.mp4"
+        run([wrapper_path("vidkit"), "--validate-only", str(sprite_path_example)])
+        run([wrapper_path("vidkit"), str(sprite_path_example), str(sprite_path_video)])
+        sprite_path_avg = average_frame(sprite_path_video, 1.7)
+        if sprite_path_avg < 25:
+            raise SystemExit(f"sprite path example selftest failed: avg={sprite_path_avg:.2f}")
+
+        invalid_sprite_source = {
+            "size": "160x90",
+            "scenes": [{"type": "layered", "duration": 1, "layers": [{"type": "sprite"}]}],
+        }
+        invalid_sprite_source_path = tmpdir / "invalid-sprite-source.json"
+        write_json(invalid_sprite_source_path, invalid_sprite_source)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_sprite_source_path)], check=False)
+        if failed.returncode == 0 or "source is required for sprite layers" not in (failed.stdout + failed.stderr):
+            raise SystemExit("invalid sprite source selftest failed")
+
+        missing_sprite_file = {
+            "size": "160x90",
+            "scenes": [{"type": "layered", "duration": 1, "layers": [{"type": "sprite", "source": "examples/assets/not-here.png"}]}],
+        }
+        missing_sprite_file_path = tmpdir / "missing-sprite-file.json"
+        write_json(missing_sprite_file_path, missing_sprite_file)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(missing_sprite_file_path)], check=False)
+        if failed.returncode == 0 or "source not found" not in (failed.stdout + failed.stderr):
+            raise SystemExit("missing sprite file selftest failed")
+
+        invalid_sprite_path = {
+            "size": "160x90",
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 1,
+                    "layers": [
+                        {
+                            "type": "sprite",
+                            "source": "examples/assets/sample.ppm",
+                            "path": {"type": "curve", "points": [{"time": 0, "x": 0, "y": 0}]},
+                        }
+                    ],
+                }
+            ],
+        }
+        invalid_sprite_path_path = tmpdir / "invalid-sprite-path.json"
+        write_json(invalid_sprite_path_path, invalid_sprite_path)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_sprite_path_path)], check=False)
+        if failed.returncode == 0 or "unsupported path type" not in (failed.stdout + failed.stderr):
+            raise SystemExit("invalid sprite path type selftest failed")
+
+        invalid_sprite_points = {
+            "size": "160x90",
+            "scenes": [
+                {
+                    "type": "layered",
+                    "duration": 1,
+                    "layers": [
+                        {
+                            "type": "sprite",
+                            "source": "examples/assets/sample.ppm",
+                            "path": {"type": "points", "points": [{"time": 1.2, "x": 0}]},
+                        }
+                    ],
+                }
+            ],
+        }
+        invalid_sprite_points_path = tmpdir / "invalid-sprite-points.json"
+        write_json(invalid_sprite_points_path, invalid_sprite_points)
+        failed = run([wrapper_path("vidkit"), "--validate-only", str(invalid_sprite_points_path)], check=False)
+        combined = failed.stdout + failed.stderr
+        if failed.returncode == 0 or "path.points[0].y is required" not in combined or "outside scene duration" not in combined:
+            raise SystemExit("invalid sprite path points selftest failed")
+
         invalid_sprite = {
             "size": "160x90",
             "scenes": [{"type": "layered", "duration": 1, "layers": [{"type": "media", "source": "examples/assets/sample.ppm", "sprite_animate": "teleport"}]}],
