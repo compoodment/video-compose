@@ -1,0 +1,79 @@
+{
+  "size": "640x360",
+  "fps": 24,
+  "scenes": [
+    {
+      "type": "layered",
+      "duration": 4.4,
+      "background": "#061018",
+      "audio": {
+        "type": "tone",
+        "frequency": 220,
+        "volume": 0.06
+      },
+      "camera": {
+        "keyframes": [
+          {"time": 0.0, "x": -22, "y": 0, "scale": 1.04},
+          {"time": 2.2, "x": 28, "y": -12, "scale": 1.13, "ease": "in_out_cubic"},
+          {"time": 4.4, "x": 8, "y": 12, "scale": 1.08, "ease": "out_cubic"}
+        ],
+        "shake": {"start": 2.55, "end": 3.25, "amount": 9, "frequency": 18}
+      },
+      "layers": [
+        {
+          "type": "media",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 282,
+          "height": 170,
+          "x": 42,
+          "y": 78,
+          "radius": 18,
+          "border": 3,
+          "border_color": "#00d8ff",
+          "sprite_animate": [
+            {"preset": "bounce", "start": 0.25, "duration": 1.2, "amount": 22},
+            {"preset": "jitter", "start": 2.55, "duration": 0.7, "amount": 7}
+          ]
+        },
+        {
+          "type": "media",
+          "source": "examples/assets/sample.ppm",
+          "source_type": "image",
+          "fit": "cover",
+          "width": 210,
+          "height": 126,
+          "x": 370,
+          "y": 130,
+          "radius": 16,
+          "border": 3,
+          "border_color": "#ff4fd8",
+          "sprite_animate": {"preset": "pop", "start": 1.25, "duration": 0.8}
+        },
+        {
+          "type": "panel",
+          "x": 70,
+          "y": 276,
+          "width": 500,
+          "height": 56,
+          "panel_color": "#000000",
+          "opacity": 0.78,
+          "radius": 14,
+          "border": 2,
+          "border_color": "#22c55e"
+        },
+        {
+          "type": "text",
+          "text": "Camera pan/zoom/shake; text stays fixed",
+          "x": 88,
+          "y": 294,
+          "align": 7,
+          "size": 23,
+          "wrap": 44,
+          "color": "white"
+        }
+      ]
+    }
+  ]
+}

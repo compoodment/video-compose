@@ -99,6 +99,7 @@ Media and panel layers support:
 - `start` / `end` timing
 - `keyframes`: `time`, `x`, `y`, `opacity`, `scale`, `ease`
 - `animate`: preset entrance/exit animation
+- `sprite_animate`: media-layer helper animation presets expanded into the same keyframe path
 
 Supported easing values: `linear`, `in_quad`, `out_quad`, `in_out_quad`, `in_cubic`, `out_cubic`, `in_out_cubic` plus `ease_in`/`ease_out` aliases.
 
@@ -109,6 +110,25 @@ Animation presets can be a string or object:
 ```
 
 Supported presets: `fade`, `fade_in`, `fade_out`, `slide_left`, `slide_right`, `slide_up`, `slide_down`, `pop`, and `none`. `pop` uses scale, so it is media-only; slide/fade presets work on media and panel/lower-third layers.
+
+Layered scenes can define a scene-level `camera` object. Camera keyframes support `x`, `y`, and `scale`; optional `shake` supports `start`, `end`, `amount`, and `frequency`. The camera transform is applied to the composed non-text video before ASS subtitles and text layers are burned in, so ASS text remains screen-fixed and readable where practical. Non-text backing panels still move with the camera.
+
+```json
+{
+  "type": "layered",
+  "duration": 4,
+  "camera": {
+    "keyframes": [
+      {"time": 0, "x": -20, "y": 0, "scale": 1.04},
+      {"time": 4, "x": 24, "y": 12, "scale": 1.12}
+    ],
+    "shake": {"start": 2.2, "end": 2.8, "amount": 8, "frequency": 18}
+  },
+  "layers": []
+}
+```
+
+Media layers can use `sprite_animate` as a string, object, or list of objects. Supported helper presets are `blink`, `bounce`, `jitter`, `squash`, `pop`, and `slap`; unsupported names fail validation. These helpers add keyframes unless the same property already has explicit keyframes.
 
 Shape layers use `"type": "shape"` with a `"shape"` name. First-pass shapes are `progress_bar`, `checkbox`, `arrow`, `cursor`, `speech_bubble`, `file_icon`, and `window`. Common fields include `x`, `y`, `width`, `height`, `start`, `end`, `opacity`, `color`, `fill`, `background`, `border_color`, and `radius`; shape-specific fields include `value` for `progress_bar`, `checked` for `checkbox`, `direction` for `arrow`, and `text` for `speech_bubble`.
 
@@ -125,6 +145,7 @@ python3 tools/vidkit-compose.py examples/vidkit.example.json example.mp4
 python3 tools/vidkit-compose.py examples/vidkit.motion-example.json motion.mp4
 python3 tools/vidkit-compose.py examples/vidkit.motion-polish-example.json polish.mp4
 python3 tools/vidkit-compose.py examples/vidkit.animation-presets-example.json presets.mp4
+python3 tools/vidkit-compose.py examples/vidkit.camera-sprite-example.json camera-sprite.mp4
 python3 tools/vidkit-compose.py examples/vidkit.shapes-presets-example.json shapes-presets.mp4
 python3 tools/vidkit-compose.py examples/vidkit.sfx-example.json sfx.mp4
 ```
