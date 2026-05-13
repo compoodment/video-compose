@@ -226,5 +226,9 @@
         "strength": 1.0
       }
     }
-  ]
+  ],
+  "render": {
+    "device": "cpu",
+    "output": "mp4"
+  }
 }

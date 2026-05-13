@@ -227,6 +227,16 @@
       }
     }
   ],
-  "samples": 96,
-  "denoise": true
+  "samples": 64,
+  "denoise": false,
+  "render": {
+    "device": "cuda",
+    "fail_if_unavailable": true,
+    "output": "sequence",
+    "encode": true,
+    "denoise": false,
+    "use_cpu": false,
+    "placeholder_frames": true,
+    "overwrite_frames": false
+  }
 }
