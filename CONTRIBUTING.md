@@ -139,6 +139,8 @@ Important: a Blender log mentioning CUDA/OptiX is not proof that the render arch
 
 Documentation should explain caller-facing behavior, not implementation history.
 
+Treat `README.md` and `CONTRIBUTING.md` as part of the feature loop. Any new user-facing capability, workflow, backend, template, helper command, render-job pattern, verification rule, or contributor expectation must either update the relevant docs in the same PR or explicitly say why no docs change is needed.
+
 Update docs when a change affects:
 
 - CLI commands
@@ -151,6 +153,11 @@ Update docs when a change affects:
 - render-job workflow or GPU expectations
 - contributor or issue standards
 
+Use this split:
+
+- `README.md` explains what users can do, how to run it, examples, requirements, and current workflows.
+- `CONTRIBUTING.md` explains how contributors should design, verify, document, and review changes.
+
 Keep docs concise. Prefer one clear example over a long abstract explanation.
 
 ## Pull request standard
@@ -161,6 +168,7 @@ A good PR description includes:
 - why it changed
 - how to try it
 - what was verified
+- README/CONTRIBUTING impact: updated, or explicitly not needed
 - visual/audio artifacts inspected, when relevant
 - GPU/device evidence for GPU render changes, when relevant
 - known gaps or follow-up issues
