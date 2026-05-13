@@ -11,7 +11,8 @@ Use this when computment asks to make or edit videos programmatically.
 
 - Composer: `tools/vidkit-compose.py` or an installed `vidkit` wrapper.
 - Edit helper: `tools/vidkit-helper.py` or an installed `vidkit-helper` wrapper.
-- Verification: `tools/vidkit-verify.py`.
+- Optional 3D backend: `tools/vidkit-blender.py` / `vidkit blender ...` / `vidkit-blender`. It validates specs and emits Blender Python without Blender installed; rendering requires a `blender` binary.
+- Verification: `tools/vidkit-verify.py` and selftests.
 - Put rendered artifacts under `artifacts/vidkit/` or another task-specific output folder.
 
 ## Workflow
@@ -20,6 +21,7 @@ Use this when computment asks to make or edit videos programmatically.
    - a template render (`vidkit template:<name> out.mp4`)
    - a starter from a built-in template (`vidkit init <name> spec.json`)
    - a custom JSON scene spec
+   - a Blender-backed 3D scene spec (`vidkit blender validate/render/script ...`)
    - an edit of existing media with `vidkit-helper`
 2. Validate specs before rendering when editing JSON:
    - `vidkit --validate-only spec.json`
@@ -30,7 +32,7 @@ Use this when computment asks to make or edit videos programmatically.
    - use `radius` for rounded panels/media masks
    - use `animate` presets for common entrances/exits before hand-authoring keyframes
    - keep glitch/effects off foreground text unless explicitly requested
-4. Render with `vidkit`.
+4. Render with `vidkit` or `vidkit blender render` when 3D is the right backend.
 5. Verify with `ffprobe`, a contact sheet, and one representative frame when visual quality matters.
 6. Send the output video with the message tool.
 
@@ -60,7 +62,13 @@ Run all core templates:
 vidkit-verify
 ```
 
-It renders known templates to `artifacts/vidkit/verify/`, probes streams, and creates contact sheets for key templates. Run `vidkit-selftest` after CLI/schema changes.
+It renders known templates to `artifacts/vidkit/verify/`, probes streams, and creates contact sheets for key templates. Run `vidkit-selftest` after CLI/schema changes. For Blender backend changes, validate a spec and emit a script even when Blender is not installed:
+
+```bash
+vidkit blender validate examples/vidkit.blender-glass-orbit-cathedral.json
+vidkit blender script examples/vidkit.blender-glass-orbit-cathedral.json /tmp/scene.py
+python3 -m py_compile /tmp/scene.py
+```
 
 ## Notes
 
